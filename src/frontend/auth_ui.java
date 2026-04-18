@@ -11,15 +11,24 @@ import javafx.scene.image.ImageView;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import org.kordamp.ikonli.javafx.FontIcon;
+import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
 import java.time.Month;
 
 public class auth_ui {
+
+    // ── Injected from Main.conn at construction time ──────
+    private final java.sql.Connection conn;
+
+    /** Always call as: new auth_ui(Main.conn) from Main.java */
+    public auth_ui(java.sql.Connection conn) {
+        this.conn = conn;
+    }
 
     // ══════════════════════════════════════════════════════
     //  ALEO FONT LOADER
@@ -56,8 +65,13 @@ public class auth_ui {
         btnEmployee.setToggleGroup(toggleGroup);
         btnManager.setToggleGroup(toggleGroup);
         btnEmployee.setSelected(true);
-        styleToggle(btnEmployee, true);
-        styleToggle(btnManager, false);
+        styleToggleWide(btnEmployee, true);
+        styleToggleWide(btnManager, false);
+
+        btnEmployee.setMaxWidth(Double.MAX_VALUE);
+        btnManager.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(btnEmployee, Priority.ALWAYS);
+        HBox.setHgrow(btnManager,  Priority.ALWAYS);
 
         HBox toggleBar = new HBox(0, btnEmployee, btnManager);
         toggleBar.setAlignment(Pos.CENTER);
@@ -66,27 +80,32 @@ public class auth_ui {
             "-fx-background-radius: 30;"
         );
         toggleBar.setPadding(new Insets(5));
-        toggleBar.setMaxWidth(340);
+        toggleBar.setMaxWidth(Double.MAX_VALUE);
 
         // ══════════════════════════════════════════════════
         //  EMPLOYEE PANEL
         // ══════════════════════════════════════════════════
 
-        // Header — Aleo BoldItalic, reduced bottom margin
         Label empTitle = new Label("Time - in");
-        empTitle.setFont(Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 34));
-        empTitle.setTextFill(Color.WHITE);
+        empTitle.setFont(Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 44));
+        empTitle.setTextFill(Color.web("#68222A"));
         empTitle.setStyle(
-            "-fx-effect: dropshadow(gaussian, rgba(255,255,255,0.3), 6, 0, 0, 0);"
+            "-fx-font-size: 44px;" +
+            "-fx-text-fill: #68222A;" +
+            "-fx-effect: dropshadow(gaussian, white, 1, 1, -1, -1)," +
+                        "dropshadow(gaussian, white, 1, 1,  1, -1)," +
+                        "dropshadow(gaussian, white, 1, 1, -1,  1)," +
+                        "dropshadow(gaussian, white, 1, 1,  1,  1)," +
+                        "dropshadow(gaussian, white, 2, 0.8, 0,  0);"
         );
-        VBox.setMargin(empTitle, new Insets(0, 0, 4, 0)); // tighten gap below title
+        empTitle.setAlignment(Pos.CENTER);
+        empTitle.setMaxWidth(Double.MAX_VALUE);
+        VBox.setMargin(empTitle, new Insets(4, 0, 8, 0));
 
-        // Input field — Aleo Regular
         TextField nameField = styledField("Enter Name");
+        nameField.setMaxWidth(Double.MAX_VALUE);
 
-        // ── Restricted Date Picker ────────────────────────
-
-        // "Shift Date" label — Aleo Bold, white, bigger
+        // ── Shift Date: Month / Day / Year dropdowns ──────
         Label dateLabel = new Label("Shift Date");
         dateLabel.setTextFill(Color.WHITE);
         dateLabel.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 16));
@@ -122,16 +141,15 @@ public class auth_ui {
 
         HBox dateRow = new HBox(10, monthBox, dayBox, yearBox);
         dateRow.setAlignment(Pos.CENTER_LEFT);
-        dateRow.setPrefWidth(455);
-        dateRow.setMaxWidth(455);
+        dateRow.setMaxWidth(Double.MAX_VALUE);
 
         VBox dateGroup = new VBox(4, dateLabel, dateRow);
         dateGroup.setAlignment(Pos.CENTER_LEFT);
+        dateGroup.setMaxWidth(Double.MAX_VALUE);
 
-        // ── Smart Time Fields — Aleo Regular ─────────────
+        // ── Time row ──────────────────────────────────────
         TextField timeInField  = buildTimeField("Time-in");
         TextField timeOutField = buildTimeField("Time-out");
-
         HBox.setHgrow(timeInField,  Priority.ALWAYS);
         HBox.setHgrow(timeOutField, Priority.ALWAYS);
         timeInField.setMaxWidth(Double.MAX_VALUE);
@@ -139,18 +157,12 @@ public class auth_ui {
 
         HBox timeRow = new HBox(14, timeInField, timeOutField);
         timeRow.setAlignment(Pos.CENTER_LEFT);
-        timeRow.setPrefWidth(455);
-        timeRow.setMaxWidth(455);
+        timeRow.setMaxWidth(Double.MAX_VALUE);
 
-        // ── Employee error label — Aleo Italic ───────────
         Label empError = errorLabel();
-
         Button empConfirm = confirmButton();
-        VBox.setMargin(empConfirm, new Insets(-35, 0, 0, 0));
 
         empConfirm.setOnAction(e -> {
-            String enteredName = nameField.getText();
-
             if (!isValidTimeFormat(timeInField.getText())) {
                 empError.setText("Time-in must be a valid time, e.g. 09:30 AM");
                 empError.setVisible(true);
@@ -161,7 +173,7 @@ public class auth_ui {
                 empError.setVisible(true);
                 return;
             }
-
+            String enteredName = nameField.getText();
             if (auth_util.authenticateEmployee(enteredName)) {
                 empError.setVisible(false);
                 openPosWindow(stage);
@@ -171,8 +183,7 @@ public class auth_ui {
             }
         });
 
-        // VBox spacing reduced from 22 → 14 to tighten gaps after the title
-        VBox employeePanel = new VBox(14,
+        VBox employeePanel = new VBox(12,
             empTitle,
             nameField,
             dateGroup,
@@ -181,78 +192,142 @@ public class auth_ui {
             empConfirm
         );
         employeePanel.setAlignment(Pos.CENTER_LEFT);
+        employeePanel.setMaxWidth(Double.MAX_VALUE);
 
         // ══════════════════════════════════════════════════
         //  MANAGER PANEL
         // ══════════════════════════════════════════════════
 
-        // Header — Aleo BoldItalic, reduced bottom margin
         Label mgrTitle = new Label("Log - in");
-        mgrTitle.setFont(Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 34));
-        mgrTitle.setTextFill(Color.WHITE);
+        mgrTitle.setFont(Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 44));
+        mgrTitle.setTextFill(Color.web("#68222A"));
         mgrTitle.setStyle(
-            "-fx-effect: dropshadow(gaussian, rgba(255,255,255,0.3), 6, 0, 0, 0);"
+            "-fx-font-size: 44px;" +
+            "-fx-text-fill: #68222A;" +
+            "-fx-effect: dropshadow(gaussian, white, 1, 1, -1, -1)," +
+                        "dropshadow(gaussian, white, 1, 1,  1, -1)," +
+                        "dropshadow(gaussian, white, 1, 1, -1,  1)," +
+                        "dropshadow(gaussian, white, 1, 1,  1,  1)," +
+                        "dropshadow(gaussian, white, 2, 0.8, 0,  0);"
         );
-        VBox.setMargin(mgrTitle, new Insets(0, 0, 4, 0)); // tighten gap below title
+        mgrTitle.setAlignment(Pos.CENTER);
+        mgrTitle.setMaxWidth(Double.MAX_VALUE);
+        VBox.setMargin(mgrTitle, new Insets(4, 0, 8, 0));
 
-        // Input fields — Aleo Regular
-        TextField     mgrName = styledField("Enter Name");
-        PasswordField mgrPass = new PasswordField();
-        mgrPass.setPromptText("Enter Password");
-        styleFieldBase(mgrPass);
+        TextField mgrName = styledField("Enter Name");
+        mgrName.setMaxWidth(Double.MAX_VALUE);
 
-        // Error — Aleo Italic
+        // ── Password field with show/hide ─────────────────
+        PasswordField mgrPassHidden = new PasswordField();
+        mgrPassHidden.setPromptText("Enter Password");
+        styleFieldBase(mgrPassHidden);
+        mgrPassHidden.setMaxWidth(Double.MAX_VALUE);
+
+        TextField mgrPassVisible = new TextField();
+        mgrPassVisible.setPromptText("Enter Password");
+        styleFieldBase(mgrPassVisible);
+        mgrPassVisible.setMaxWidth(Double.MAX_VALUE);
+        mgrPassVisible.setVisible(false);
+        mgrPassVisible.setManaged(false);
+
+        mgrPassHidden.textProperty().addListener((obs, o, n) -> {
+            if (!mgrPassVisible.isFocused()) mgrPassVisible.setText(n);
+        });
+        mgrPassVisible.textProperty().addListener((obs, o, n) -> {
+            if (!mgrPassHidden.isFocused()) mgrPassHidden.setText(n);
+        });
+
+        FontIcon eyeIcon      = new FontIcon(FontAwesomeSolid.EYE);
+        eyeIcon.setIconSize(18);
+        eyeIcon.setIconColor(Color.web("#68222A"));
+
+        FontIcon eyeSlashIcon = new FontIcon(FontAwesomeSolid.EYE_SLASH);
+        eyeSlashIcon.setIconSize(18);
+        eyeSlashIcon.setIconColor(Color.web("#68222A"));
+
+        Button toggleVisBtn = new Button();
+        toggleVisBtn.setGraphic(eyeIcon);
+        toggleVisBtn.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-cursor: hand;" +
+            "-fx-padding: 0 12 0 12;"
+        );
+
+        final boolean[] passwordVisible = {false};
+        toggleVisBtn.setOnAction(e -> {
+            passwordVisible[0] = !passwordVisible[0];
+            if (passwordVisible[0]) {
+                mgrPassVisible.setText(mgrPassHidden.getText());
+                mgrPassHidden.setVisible(false);
+                mgrPassHidden.setManaged(false);
+                mgrPassVisible.setVisible(true);
+                mgrPassVisible.setManaged(true);
+                toggleVisBtn.setGraphic(eyeSlashIcon);
+            } else {
+                mgrPassHidden.setText(mgrPassVisible.getText());
+                mgrPassVisible.setVisible(false);
+                mgrPassVisible.setManaged(false);
+                mgrPassHidden.setVisible(true);
+                mgrPassHidden.setManaged(true);
+                toggleVisBtn.setGraphic(eyeIcon);
+            }
+        });
+
+        StackPane passStack = new StackPane();
+        passStack.setMaxWidth(Double.MAX_VALUE);
+        passStack.setAlignment(Pos.CENTER_RIGHT);
+        passStack.getChildren().addAll(mgrPassHidden, mgrPassVisible, toggleVisBtn);
+        StackPane.setAlignment(toggleVisBtn, Pos.CENTER_RIGHT);
+
         Label mgrError = errorLabel();
-
         Button mgrConfirm = confirmButton();
-        VBox.setMargin(mgrConfirm, new Insets(-35, 0, 0, 0));
 
         mgrConfirm.setOnAction(e -> {
             String enteredName = mgrName.getText();
-            String enteredPass = mgrPass.getText();
+            String enteredPass = passwordVisible[0]
+                    ? mgrPassVisible.getText()
+                    : mgrPassHidden.getText();
             if (auth_util.authenticateManager(enteredName, enteredPass)) {
                 mgrError.setVisible(false);
                 showConfirmedModal(stage);
             } else {
-                mgrError.setText("Invalid name or password.");
+                mgrError.setText("Invalid credentials!");
                 mgrError.setVisible(true);
             }
         });
 
-        // VBox spacing reduced from 22 → 14 to tighten gaps after the title
-        VBox managerPanel = new VBox(14, mgrTitle, mgrName, mgrPass, mgrError, mgrConfirm);
+        VBox managerPanel = new VBox(12, mgrTitle, mgrName, passStack, mgrError, mgrConfirm);
         managerPanel.setAlignment(Pos.CENTER_LEFT);
+        managerPanel.setMaxWidth(Double.MAX_VALUE);
 
         // ══════════════════════════════════════════════════
         //  MAIN CONTAINER
         // ══════════════════════════════════════════════════
-        VBox container = new VBox(26, toggleBar, employeePanel);
+        VBox container = new VBox(20, toggleBar, employeePanel);
         container.setAlignment(Pos.CENTER_LEFT);
-        container.setPadding(new Insets(44, 48, 44, 48));
+        container.setPadding(new Insets(36, 40, 40, 40));
         container.setStyle(
             "-fx-background-color: #68222A;" +
             "-fx-background-radius: 28;"
         );
-        container.setPrefWidth(560);
-        container.setMinWidth(560);
-        container.setMaxWidth(560);
-
-        VBox.setMargin(toggleBar, new Insets(0, 0, 6, 0));
+        container.setPrefWidth(480);
+        container.setMinWidth(480);
+        container.setMaxWidth(480);
 
         container.setLayoutX(160);
         container.setLayoutY(110);
 
         btnEmployee.setOnAction(e -> {
             if (!btnEmployee.isSelected()) btnEmployee.setSelected(true);
-            styleToggle(btnEmployee, true);
-            styleToggle(btnManager, false);
+            styleToggleWide(btnEmployee, true);
+            styleToggleWide(btnManager, false);
             switchPanel(container, employeePanel);
         });
 
         btnManager.setOnAction(e -> {
             if (!btnManager.isSelected()) btnManager.setSelected(true);
-            styleToggle(btnManager, true);
-            styleToggle(btnEmployee, false);
+            styleToggleWide(btnManager, true);
+            styleToggleWide(btnEmployee, false);
             switchPanel(container, managerPanel);
         });
 
@@ -268,120 +343,18 @@ public class auth_ui {
     }
 
     // ══════════════════════════════════════════════════════
-    //  SMART TIME FIELD — Aleo Regular
+    //  OPEN POS WINDOW
     // ══════════════════════════════════════════════════════
-    private TextField buildTimeField(String placeholder) {
-        TextField tf = new TextField();
-        tf.setPromptText(placeholder + "  e.g. 09:30 AM");
-        tf.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 12;" +
-            "-fx-font-size: 15px;" +
-            "-fx-padding: 12 16 12 16;" +
-            "-fx-font-family: 'Aleo';"
-        );
-        tf.setPrefHeight(52);
-
-        final String[] buf = {"", "", "", "", "AM"};
-        final boolean[] programmatic = {false};
-
-        tf.textProperty().addListener((obs, oldVal, newVal) -> {
-            if (programmatic[0]) return;
-            programmatic[0] = true;
-
-            String rendered = renderTime(buf);
-            if (newVal.length() < rendered.length()) {
-                handleBackspace(buf);
-            } else {
-                char typed = 0;
-                for (int i = 0; i < newVal.length(); i++) {
-                    if (i >= rendered.length() || newVal.charAt(i) != rendered.charAt(i)) {
-                        typed = newVal.charAt(i);
-                        break;
-                    }
-                }
-                if (typed != 0) handleChar(buf, typed);
-            }
-
-            String next = renderTime(buf);
-            tf.setText(next);
-            tf.positionCaret(next.length());
-            programmatic[0] = false;
-        });
-
-        tf.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-            if (!isNowFocused) {
-                programmatic[0] = true;
-                autoPad(buf);
-                tf.setText(renderTime(buf));
-                programmatic[0] = false;
-            }
-        });
-
-        return tf;
+    private void openPosWindow(Stage authStage) {
+        Stage posStage = new Stage();
+        pos_records_window_ui posUI = new pos_records_window_ui(conn);
+        posUI.start(posStage);
+        authStage.close();
     }
 
-    private void handleChar(String[] buf, char c) {
-        char upper = Character.toUpperCase(c);
-        if (upper == 'A') { buf[4] = "AM"; return; }
-        if (upper == 'P') { buf[4] = "PM"; return; }
-        if (!Character.isDigit(c)) return;
-        int digit = c - '0';
-
-        if (buf[0].isEmpty()) {
-            if (digit > 1) { buf[0] = "0"; buf[1] = String.valueOf(digit); }
-            else           { buf[0] = String.valueOf(digit); }
-            return;
-        }
-        if (buf[1].isEmpty()) {
-            int firstHour = Integer.parseInt(buf[0]);
-            if      (firstHour == 1 && digit <= 2) { buf[1] = String.valueOf(digit); }
-            else if (firstHour == 0 && digit >= 1) { buf[1] = String.valueOf(digit); }
-            else if (firstHour == 0 && digit == 0) { buf[0] = ""; buf[1] = ""; }
-            return;
-        }
-        if (buf[2].isEmpty()) {
-            if (digit > 5) { buf[2] = "0"; buf[3] = String.valueOf(digit); }
-            else           { buf[2] = String.valueOf(digit); }
-            return;
-        }
-        if (buf[3].isEmpty()) {
-            buf[3] = String.valueOf(digit);
-        }
-    }
-
-    private void handleBackspace(String[] buf) {
-        if (!buf[3].isEmpty()) { buf[3] = ""; return; }
-        if (!buf[2].isEmpty()) { buf[2] = ""; return; }
-        if (!buf[1].isEmpty()) { buf[1] = ""; return; }
-        if (!buf[0].isEmpty()) { buf[0] = ""; }
-    }
-
-    private void autoPad(String[] buf) {
-        if (!buf[0].isEmpty() && buf[1].isEmpty()) {
-            int h = Integer.parseInt(buf[0]);
-            if (h == 0) { buf[0] = ""; }
-            else        { buf[0] = "0"; buf[1] = String.valueOf(h); }
-        }
-        if (!buf[2].isEmpty() && buf[3].isEmpty()) {
-            buf[3] = "0";
-        }
-    }
-
-    private String renderTime(String[] buf) {
-        String h1 = buf[0].isEmpty() ? "_" : buf[0];
-        String h2 = buf[1].isEmpty() ? "_" : buf[1];
-        String m1 = buf[2].isEmpty() ? "_" : buf[2];
-        String m2 = buf[3].isEmpty() ? "_" : buf[3];
-        return h1 + h2 + ":" + m1 + m2 + " " + buf[4];
-    }
-
-    private boolean isValidTimeFormat(String text) {
-        if (text == null) return false;
-        return text.matches("^(0[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$");
-    }
-
-    // ── Modal ─────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════
+    //  MANAGER CONFIRMED MODAL
+    // ══════════════════════════════════════════════════════
     private void showConfirmedModal(Stage ownerStage) {
         Stage modal = new Stage();
         modal.initModality(Modality.APPLICATION_MODAL);
@@ -393,12 +366,10 @@ public class auth_ui {
         icon.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 48));
         icon.setTextFill(Color.web("#2ecc40"));
 
-        // Modal message — Aleo SemiBold
         Label msg = new Label("Credentials confirmed!");
         msg.setFont(Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf", 20));
         msg.setTextFill(Color.WHITE);
 
-        // Modal button — Aleo Bold
         Button okBtn = new Button("Continue");
         okBtn.setPrefWidth(200);
         okBtn.setPrefHeight(44);
@@ -428,14 +399,115 @@ public class auth_ui {
         modal.showAndWait();
     }
 
-    private void openPosWindow(Stage authStage) {
-        Stage posStage = new Stage();
-        pos_records_window_ui posUI = new pos_records_window_ui();
-        posUI.start(posStage);
-        authStage.close();
+    // ══════════════════════════════════════════════════════
+    //  SMART TIME FIELD
+    // ══════════════════════════════════════════════════════
+    private TextField buildTimeField(String placeholder) {
+        TextField tf = new TextField();
+        tf.setPromptText(placeholder + "  e.g. 09:30 AM");
+        tf.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 14;" +
+            "-fx-font-size: 15px;" +
+            "-fx-padding: 12 16 12 16;" +
+            "-fx-font-family: 'Aleo';"
+        );
+        tf.setPrefHeight(52);
+
+        final String[] buf = {"", "", "", "", "AM"};
+        final boolean[] programmatic = {false};
+
+        tf.textProperty().addListener((obs, oldVal, newVal) -> {
+            if (programmatic[0]) return;
+            programmatic[0] = true;
+            String rendered = renderTime(buf);
+            if (newVal.length() < rendered.length()) {
+                handleBackspace(buf);
+            } else {
+                char typed = 0;
+                for (int i = 0; i < newVal.length(); i++) {
+                    if (i >= rendered.length() || newVal.charAt(i) != rendered.charAt(i)) {
+                        typed = newVal.charAt(i);
+                        break;
+                    }
+                }
+                if (typed != 0) handleChar(buf, typed);
+            }
+            String next = renderTime(buf);
+            tf.setText(next);
+            tf.positionCaret(next.length());
+            programmatic[0] = false;
+        });
+
+        tf.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused) {
+                programmatic[0] = true;
+                autoPad(buf);
+                tf.setText(renderTime(buf));
+                programmatic[0] = false;
+            }
+        });
+
+        return tf;
     }
 
-    // Error label — Aleo Italic
+    private void handleChar(String[] buf, char c) {
+        char upper = Character.toUpperCase(c);
+        if (upper == 'A') { buf[4] = "AM"; return; }
+        if (upper == 'P') { buf[4] = "PM"; return; }
+        if (!Character.isDigit(c)) return;
+        int digit = c - '0';
+        if (buf[0].isEmpty()) {
+            if (digit > 1) { buf[0] = "0"; buf[1] = String.valueOf(digit); }
+            else           { buf[0] = String.valueOf(digit); }
+            return;
+        }
+        if (buf[1].isEmpty()) {
+            int firstHour = Integer.parseInt(buf[0]);
+            if      (firstHour == 1 && digit <= 2) { buf[1] = String.valueOf(digit); }
+            else if (firstHour == 0 && digit >= 1) { buf[1] = String.valueOf(digit); }
+            else if (firstHour == 0 && digit == 0) { buf[0] = ""; buf[1] = ""; }
+            return;
+        }
+        if (buf[2].isEmpty()) {
+            if (digit > 5) { buf[2] = "0"; buf[3] = String.valueOf(digit); }
+            else           { buf[2] = String.valueOf(digit); }
+            return;
+        }
+        if (buf[3].isEmpty()) { buf[3] = String.valueOf(digit); }
+    }
+
+    private void handleBackspace(String[] buf) {
+        if (!buf[3].isEmpty()) { buf[3] = ""; return; }
+        if (!buf[2].isEmpty()) { buf[2] = ""; return; }
+        if (!buf[1].isEmpty()) { buf[1] = ""; return; }
+        if (!buf[0].isEmpty()) { buf[0] = ""; }
+    }
+
+    private void autoPad(String[] buf) {
+        if (!buf[0].isEmpty() && buf[1].isEmpty()) {
+            int h = Integer.parseInt(buf[0]);
+            if (h == 0) { buf[0] = ""; }
+            else        { buf[0] = "0"; buf[1] = String.valueOf(h); }
+        }
+        if (!buf[2].isEmpty() && buf[3].isEmpty()) { buf[3] = "0"; }
+    }
+
+    private String renderTime(String[] buf) {
+        String h1 = buf[0].isEmpty() ? "_" : buf[0];
+        String h2 = buf[1].isEmpty() ? "_" : buf[1];
+        String m1 = buf[2].isEmpty() ? "_" : buf[2];
+        String m2 = buf[3].isEmpty() ? "_" : buf[3];
+        return h1 + h2 + ":" + m1 + m2 + " " + buf[4];
+    }
+
+    private boolean isValidTimeFormat(String text) {
+        if (text == null) return false;
+        return text.matches("^(0[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$");
+    }
+
+    // ── Helpers ───────────────────────────────────────────
+
     private Label errorLabel() {
         Label lbl = new Label();
         lbl.setTextFill(Color.web("#ff6b6b"));
@@ -445,13 +517,10 @@ public class auth_ui {
         return lbl;
     }
 
-    // ── Helpers ───────────────────────────────────────────
-
-    // ComboBox — Aleo Regular via CSS
     private <T> void styleComboBox(ComboBox<T> box) {
         box.setStyle(
             "-fx-background-color: white;" +
-            "-fx-background-radius: 12;" +
+            "-fx-background-radius: 14;" +
             "-fx-border-color: transparent;" +
             "-fx-font-size: 14px;" +
             "-fx-font-family: 'Aleo';" +
@@ -474,7 +543,6 @@ public class auth_ui {
         fadeOut.play();
     }
 
-    // Input field — Aleo Regular
     private TextField styledField(String placeholder) {
         TextField f = new TextField();
         f.setPromptText(placeholder);
@@ -485,20 +553,19 @@ public class auth_ui {
     private void styleFieldBase(Control f) {
         f.setStyle(
             "-fx-background-color: white;" +
-            "-fx-background-radius: 12;" +
+            "-fx-background-radius: 14;" +
             "-fx-padding: 12 16 12 16;" +
             "-fx-font-size: 15px;" +
             "-fx-font-family: 'Aleo';"
         );
-        f.setPrefWidth(455);
+        f.setPrefWidth(Double.MAX_VALUE);
         f.setPrefHeight(52);
     }
 
-    // Button — Aleo Bold
     private Button confirmButton() {
         Button btn = new Button("Confirm");
         btn.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 16));
-        btn.setPrefWidth(455);
+        btn.setMaxWidth(Double.MAX_VALUE);
         btn.setPrefHeight(52);
         btn.setStyle(
             "-fx-background-color: #2ecc40;" +
@@ -506,14 +573,13 @@ public class auth_ui {
             "-fx-font-size: 16px;" +
             "-fx-font-weight: bold;" +
             "-fx-font-family: 'Aleo';" +
-            "-fx-background-radius: 12;" +
+            "-fx-background-radius: 14;" +
             "-fx-cursor: hand;"
         );
         return btn;
     }
 
-    // Toggle buttons — Aleo Bold (active) / Aleo Medium (inactive)
-    private void styleToggle(ToggleButton btn, boolean active) {
+    private void styleToggleWide(ToggleButton btn, boolean active) {
         if (active) {
             btn.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 14));
             btn.setStyle(
@@ -523,7 +589,7 @@ public class auth_ui {
                 "-fx-font-size: 14px;" +
                 "-fx-font-family: 'Aleo';" +
                 "-fx-background-radius: 30;" +
-                "-fx-padding: 10 36 10 36;" +
+                "-fx-padding: 10 0 10 0;" +
                 "-fx-cursor: hand;"
             );
         } else {
@@ -534,7 +600,7 @@ public class auth_ui {
                 "-fx-font-size: 14px;" +
                 "-fx-font-family: 'Aleo';" +
                 "-fx-background-radius: 30;" +
-                "-fx-padding: 10 36 10 36;" +
+                "-fx-padding: 10 0 10 0;" +
                 "-fx-cursor: hand;"
             );
         }

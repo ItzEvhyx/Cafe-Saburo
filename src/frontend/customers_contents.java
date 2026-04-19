@@ -28,20 +28,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/**
- * customers_contents — Customer List view.
- * Columns: Customer ID | Customer Name | Order ID | Loyalty Pts
- *
- * Tabs        : Active (default) | Archived
- * Archive mode: archive icon toggles checkboxes on each row.
- *               "Archive All" selects all. "Confirm" archives/restores selected rows.
- * Delete      : hard delete — removes customer and their orders from the DB entirely.
- * Export CSV  : downloads the current tab's rows as a .csv file.
- *
- * Live update : call prependOrUpdateCustomer(customerId, customerName, orderId) after
- *               a new order is submitted from menu_contents to update the customer list
- *               without a full re-fetch.
- */
 public class customers_contents {
 
     // ══════════════════════════════════════════════════════
@@ -59,6 +45,10 @@ public class customers_contents {
     private static final double ROW_H        = 44;
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
+
+    // ── Fixed modal dimensions ────────────────────────────
+    private static final double MODAL_W = 440;
+    private static final double MODAL_H = 260;
 
     // ══════════════════════════════════════════════════════
     //  STYLE CONSTANTS
@@ -126,29 +116,12 @@ public class customers_contents {
     // ══════════════════════════════════════════════════════
     //  PUBLIC LIVE-UPDATE API
     // ══════════════════════════════════════════════════════
-
-    /**
-     * Called by menu_contents (via the app controller) after a successful order submit.
-     *
-     * Behaviour:
-     *  • If the customer already exists in cachedRows  → update their latest orderId
-     *    and increment loyalty pts by 10, then re-sort and rebuild.
-     *  • If the customer is new → prepend a new row with 10 loyalty pts and rebuild.
-     *
-     * Only operates when the Active tab is showing; silently skips otherwise
-     * (the DB will be correct and the next switchTab("active") will re-fetch).
-     *
-     * @param customerId    Customer ID returned by the DB insert/lookup
-     * @param customerName  Display name of the customer
-     * @param orderId       The newly created order ID (shown as latest order)
-     */
     public void prependOrUpdateCustomer(String customerId, String customerName, String orderId) {
         if (!currentTab.equals("active")) return;
 
         boolean found = false;
         for (String[] row : cachedRows) {
             if (row[0].equals(customerId)) {
-                // Update latest order ID and bump loyalty by 10
                 row[2] = orderId;
                 int pts = 0;
                 try { pts = Integer.parseInt(row[3]); } catch (NumberFormatException ignored) {}
@@ -159,7 +132,6 @@ public class customers_contents {
         }
 
         if (!found) {
-            // New customer — 10 pts for their first order
             cachedRows.add(0, new String[]{
                 customerId,
                 customerName,
@@ -168,7 +140,6 @@ public class customers_contents {
             });
         }
 
-        // Re-sort: highest loyalty pts first, then by name (mirrors DB query order)
         cachedRows.sort((a, b) -> {
             int ptsA = 0, ptsB = 0;
             try { ptsA = Integer.parseInt(a[3]); } catch (NumberFormatException ignored) {}
@@ -279,9 +250,7 @@ public class customers_contents {
         );
 
         Stage stage = null;
-        try {
-            stage = (Stage) root.getScene().getWindow();
-        } catch (Exception ignored) {}
+        try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
 
         File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
         if (file == null) return;
@@ -298,16 +267,13 @@ public class customers_contents {
                 );
                 writer.newLine();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private String escapeCsv(String value) {
         if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
             return "\"" + value.replace("\"", "\"\"") + "\"";
-        }
         return value;
     }
 
@@ -333,12 +299,11 @@ public class customers_contents {
         double confirmW = 90;
         double csvW     = 120;
 
-        // ── Title + archive button ────────────────────────
         Label title = new Label("Customer List");
         title.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 36px;" +
-            "-fx-font-weight: extra-bold;" +
+            "-fx-font-weight: 800;" +
             "-fx-text-fill: " + ACCENT + ";"
         );
 
@@ -362,7 +327,6 @@ public class customers_contents {
         titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side buttons ────────────────────────────
         double deleteX      = totalW - SIDE_PADDING - iconW;
         double exportCsvX   = deleteX - gap - csvW;
         double archivedTabX = exportCsvX - gap - tabW;
@@ -370,7 +334,6 @@ public class customers_contents {
         double confirmX     = activeTabX - gap - confirmW;
         double archAllX     = confirmX - gap - archAllW;
 
-        // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -398,7 +361,6 @@ public class customers_contents {
             ))
         );
 
-        // ── Export CSV button ─────────────────────────────
         exportCsvBtn = new Label("Export CSV");
         FontIcon csvIcon = new FontIcon(FontAwesomeSolid.FILE_DOWNLOAD);
         csvIcon.setIconSize(13);
@@ -416,7 +378,6 @@ public class customers_contents {
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
         exportCsvBtn.setOnMouseClicked(e -> exportCsv());
 
-        // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
         activeTabBtn.setLayoutX(activeTabX);
         activeTabBtn.setLayoutY(btnY);
@@ -437,7 +398,6 @@ public class customers_contents {
         archivedTabBtn.setOnMouseExited(e -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
-        // ── Archive All / Confirm buttons ─────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW);
@@ -480,7 +440,6 @@ public class customers_contents {
             rebuildTable();
         });
 
-        // ── Initial build ─────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
@@ -549,20 +508,27 @@ public class customers_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  CONFIRMATION MODAL
+    //  CONFIRMATION MODAL — fixed size
     // ══════════════════════════════════════════════════════
     private Pane buildConfirmModal(String context, String subMessage, Runnable onConfirm) {
         Pane overlay = new Pane();
         overlay.setPrefWidth(totalW);
         overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);
         overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);
         overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
+        card.setPrefWidth(MODAL_W);
+        card.setMinWidth(MODAL_W);
+        card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H);
+        card.setMinHeight(MODAL_H);
+        card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
-        card.setMaxWidth(440);
         card.setStyle(
             "-fx-background-color: white;" +
             "-fx-background-radius: 14;" +
@@ -584,6 +550,7 @@ public class customers_contents {
         );
         heading.setAlignment(Pos.CENTER);
         heading.setWrapText(true);
+        heading.setMaxWidth(MODAL_W - 80);
 
         Label sub = new Label(subMessage);
         sub.setStyle(
@@ -595,6 +562,7 @@ public class customers_contents {
         );
         sub.setAlignment(Pos.CENTER);
         sub.setWrapText(true);
+        sub.setMaxWidth(MODAL_W - 80);
 
         Label noBtn = new Label("No, cancel");
         noBtn.setCursor(javafx.scene.Cursor.HAND);
@@ -626,7 +594,9 @@ public class customers_contents {
         StackPane centred = new StackPane(card);
         centred.setPrefWidth(totalW);
         centred.setPrefHeight(totalH);
+        centred.setMinWidth(totalW);
         centred.setMinHeight(totalH);
+        centred.setMaxWidth(totalW);
         centred.setMaxHeight(totalH);
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);

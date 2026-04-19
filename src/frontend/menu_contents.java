@@ -1040,7 +1040,7 @@ public class menu_contents {
                "-fx-padding: 8 20 8 20;" +
                "-fx-cursor: hand;";
     }
-
+    
     private String sizeBadgeStyle(boolean active) {
         return "-fx-font-family: '" + FONT_FAMILY + "';" +
                "-fx-font-size: 13px;" +

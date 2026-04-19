@@ -2,11 +2,15 @@ package frontend;
 
 import backend.auth_util;
 import backend.menu_util.SubmitResult;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -39,8 +43,15 @@ public class pos_records_window_ui {
     // ══════════════════════════════════════════════════════
     //  CARD 2 CONFIGURATION
     // ══════════════════════════════════════════════════════
-    private static final double CARD2_H = 480;
     private static final double CARD2_Y = 370;
+    private static final double CARD2_H = 310;
+
+    // ══════════════════════════════════════════════════════
+    //  CARD 3 CONFIGURATION
+    // ══════════════════════════════════════════════════════
+    private static final double CARD3_GAP = 10;
+    private static final double CARD3_H   = 135;
+    private static final double CARD3_Y   = CARD2_Y + CARD2_H + CARD3_GAP;
 
     // ══════════════════════════════════════════════════════
     //  CONTENT PANE CONFIGURATION
@@ -54,12 +65,26 @@ public class pos_records_window_ui {
     private static final String DEFAULT_BG  = "transparent";
     private static final String FONT_FAMILY = "Aleo";
 
+    // ── Fixed modal dimensions ────────────────────────────
+    private static final double MODAL_W = 440;
+    private static final double MODAL_H = 260;
+
     private final StackPane contentPane = new StackPane();
     private final Connection conn;
 
     private menu_contents      menuContents;
     private orders_contents    ordersContents;
     private customers_contents customersContents;
+    private payments_contents  paymentsContents;
+    private timelogs_contents  timelogsContents;
+    private employees_contents employeesContents;  // ← NEW
+
+    // Live-updating labels in Card 3
+    private Label     hoursWorkedValue;
+    private Timeline  shiftClock;
+
+    // Root overlay pane for modals
+    private Pane      rootPane;
 
     private static boolean fontsLoaded = false;
     private static void loadFonts() {
@@ -91,7 +116,6 @@ public class pos_records_window_ui {
     public void start(Stage stage) {
         loadFonts();
 
-        // ── Read role once ─────────────────────────────────
         boolean isManager = auth_util.isManager();
 
         double screenW = Screen.getPrimary().getBounds().getWidth();
@@ -104,10 +128,15 @@ public class pos_records_window_ui {
 
         double contentW = screenW - CONTENT_X - 10;
 
+        // ── Instantiate all content views ─────────────────
         menuContents      = new menu_contents(contentW, CONTENT_H, conn);
         ordersContents    = new orders_contents(contentW, CONTENT_H, conn);
         customersContents = new customers_contents(contentW, CONTENT_H, conn);
+        paymentsContents  = new payments_contents(contentW, CONTENT_H, conn);
+        timelogsContents  = new timelogs_contents(contentW, CONTENT_H, conn);
+        employeesContents = new employees_contents(contentW, CONTENT_H, conn);  // ← NEW
 
+        // ── Cross-view live-update wiring ─────────────────
         menuContents.setOnOrderSubmitted(result -> {
             ordersContents.prependOrder(
                 result.orderId,
@@ -119,9 +148,19 @@ public class pos_records_window_ui {
                 result.customerName,
                 result.orderId
             );
+            if (result.paymentId != null) {
+                paymentsContents.prependPayment(
+                    result.paymentId,
+                    result.orderId,
+                    result.paymentMethod,
+                    result.amountFormatted
+                );
+            }
         });
 
-        // ── Card 1: always accessible ─────────────────────
+        // ══════════════════════════════════════════════════
+        //  CARD 1 — always accessible
+        // ══════════════════════════════════════════════════
         HBox menuBtn      = createNavButton("Menu",      "assets/icons/menu_icon.png",      46, 23, true);
         HBox ordersBtn    = createNavButton("Orders",    "assets/icons/orders_icon.png",    46, 23, true);
         HBox customersBtn = createNavButton("Customers", "assets/icons/customers_icon.png", 46, 23, true);
@@ -129,20 +168,16 @@ public class pos_records_window_ui {
         VBox card1 = new VBox(8);
         card1.setAlignment(Pos.CENTER_LEFT);
         card1.setPadding(new Insets(10, 6, 10, 6));
-        card1.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 18;" +
-            "-fx-border-color: #882F39;" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 18;"
-        );
+        card1.setStyle(cardStyle());
         card1.setPrefWidth(CARD_W);
         card1.setPrefHeight(CARD_H);
         card1.setLayoutX(CARD_X);
         card1.setLayoutY(CARD_Y);
         card1.getChildren().addAll(menuBtn, ordersBtn, customersBtn);
 
-        // ── "Manager only" divider label ──────────────────
+        // ══════════════════════════════════════════════════
+        //  CARD 2 — manager-only buttons, scrollable
+        // ══════════════════════════════════════════════════
         Label managerLabel = new Label("— Manager only —");
         managerLabel.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -151,11 +186,10 @@ public class pos_records_window_ui {
             "-fx-text-fill: " + ACCENT + ";" +
             "-fx-opacity: 0.75;"
         );
-        managerLabel.setPrefWidth(CARD_W);
+        managerLabel.setPrefWidth(CARD_W - 12);
         managerLabel.setAlignment(Pos.CENTER);
-        VBox.setMargin(managerLabel, new Insets(-4, 0, -4, 0));
+        VBox.setMargin(managerLabel, new Insets(0, 0, 2, 0));
 
-        // ── Card 2: locked when employee ──────────────────
         HBox paymentsBtn   = createNavButton("Payments",   "assets/icons/payments_icon.png",   38, 20, isManager);
         HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",   38, 20, isManager);
         HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",  38, 20, isManager);
@@ -164,25 +198,43 @@ public class pos_records_window_ui {
         HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",  38, 20, isManager);
         HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png", 38, 20, isManager);
 
-        VBox card2 = new VBox(7);
-        card2.setAlignment(Pos.CENTER_LEFT);
-        card2.setPadding(new Insets(10, 6, 10, 6));
-        card2.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 18;" +
-            "-fx-border-color: #882F39;" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 18;"
-        );
-        card2.setPrefWidth(CARD_W);
-        card2.setPrefHeight(CARD2_H);
-        card2.setLayoutX(CARD_X);
-        card2.setLayoutY(CARD2_Y);
-        card2.getChildren().addAll(
+        VBox card2Inner = new VBox(7);
+        card2Inner.setAlignment(Pos.CENTER_LEFT);
+        card2Inner.setPadding(new Insets(6, 6, 6, 6));
+        card2Inner.getChildren().addAll(
             managerLabel,
             paymentsBtn, timeLogsBtn, employeesBtn,
             inventoryBtn, suppliersBtn, purchasesBtn, promotionsBtn
         );
+
+        ScrollPane card2Scroll = new ScrollPane(card2Inner);
+        card2Scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        card2Scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        card2Scroll.setFitToWidth(true);
+        card2Scroll.setStyle(
+            "-fx-background: transparent;" +
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-padding: 0;"
+        );
+        card2Scroll.setPrefWidth(CARD_W - 4);
+        card2Scroll.setPrefHeight(CARD2_H - 4);
+
+        VBox card2 = new VBox(0);
+        card2.setAlignment(Pos.TOP_LEFT);
+        card2.setStyle(cardStyle());
+        card2.setPrefWidth(CARD_W);
+        card2.setPrefHeight(CARD2_H);
+        card2.setLayoutX(CARD_X);
+        card2.setLayoutY(CARD2_Y);
+        card2.getChildren().add(card2Scroll);
+
+        // ══════════════════════════════════════════════════
+        //  CARD 3 — signed-in session info
+        // ══════════════════════════════════════════════════
+        VBox card3 = buildSessionCard(stage);
+        card3.setLayoutX(CARD_X);
+        card3.setLayoutY(CARD3_Y);
 
         // ── Content pane ──────────────────────────────────
         contentPane.setAlignment(Pos.CENTER);
@@ -200,31 +252,263 @@ public class pos_records_window_ui {
 
         showMenu();
 
-        // ── Card 1 — always wired ─────────────────────────
+        // ── Card 1 wiring ─────────────────────────────────
         menuBtn.setOnMouseClicked(e      -> showMenu());
         ordersBtn.setOnMouseClicked(e    -> showOrders());
         customersBtn.setOnMouseClicked(e -> showCustomers());
 
-        // ── Card 2 — only wired for managers ─────────────
+        // ── Card 2 wiring (managers only) ─────────────────
         if (isManager) {
-            paymentsBtn.setOnMouseClicked(e   -> switchContent("Payments"));
-            timeLogsBtn.setOnMouseClicked(e   -> switchContent("Time Logs"));
-            employeesBtn.setOnMouseClicked(e  -> switchContent("Employees"));
+            paymentsBtn.setOnMouseClicked(e   -> showPayments());
+            timeLogsBtn.setOnMouseClicked(e   -> showTimeLogs());
+            employeesBtn.setOnMouseClicked(e  -> showEmployees());   // ← wired (was placeholder)
             inventoryBtn.setOnMouseClicked(e  -> switchContent("Inventory"));
             suppliersBtn.setOnMouseClicked(e  -> switchContent("Suppliers"));
             purchasesBtn.setOnMouseClicked(e  -> switchContent("Purchases"));
             promotionsBtn.setOnMouseClicked(e -> switchContent("Promotions"));
         }
 
-        Pane root = new Pane();
-        root.getChildren().addAll(background, card1, card2, contentPane);
+        // ── Start live clock ──────────────────────────────
+        startShiftClock();
 
-        Scene scene = new Scene(root, screenW, screenH);
+        rootPane = new Pane();
+        rootPane.getChildren().addAll(background, card1, card2, card3, contentPane);
+
+        Scene scene = new Scene(rootPane, screenW, screenH);
         stage.setTitle("Cafe Saburo – POS & Records");
         stage.setScene(scene);
         stage.setResizable(false);
         stage.sizeToScene();
         stage.show();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  CARD 3 — SESSION INFO BUILDER
+    // ══════════════════════════════════════════════════════
+    private VBox buildSessionCard(Stage stage) {
+        VBox card = new VBox(10);
+        card.setPrefWidth(CARD_W);
+        card.setPrefHeight(CARD3_H);
+        card.setPadding(new Insets(14, 14, 14, 14));
+        card.setStyle(cardStyle());
+
+        // ── Header row: avatar icon + name ────────────────
+        FontIcon avatarIcon = new FontIcon(FontAwesomeSolid.USER_CIRCLE);
+        avatarIcon.setIconSize(22);
+        avatarIcon.setIconColor(Color.web(ACCENT));
+
+        Label nameLabel = new Label(auth_util.getCurrentName());
+        nameLabel.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: " + ACCENT + ";"
+        );
+        nameLabel.setWrapText(true);
+
+        String roleText = auth_util.isManager() ? "Manager" : "Employee";
+        Label roleBadge = new Label(roleText);
+        roleBadge.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 10px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: white;" +
+            "-fx-background-color: " + ACCENT + ";" +
+            "-fx-background-radius: 6;" +
+            "-fx-padding: 1 6 1 6;"
+        );
+
+        VBox nameBox = new VBox(3, nameLabel, roleBadge);
+        nameBox.setAlignment(Pos.CENTER_LEFT);
+
+        HBox headerRow = new HBox(8, avatarIcon, nameBox);
+        headerRow.setAlignment(Pos.CENTER_LEFT);
+
+        // ── Divider ───────────────────────────────────────
+        Region divider = new Region();
+        divider.setPrefHeight(1);
+        divider.setStyle("-fx-background-color: #F0D8DA;");
+
+        // ── Time-in row ───────────────────────────────────
+        Label timeInRow = buildInfoRow(
+            FontAwesomeSolid.SIGN_IN_ALT,
+            "Time In",
+            auth_util.getTimeInFormatted()
+        );
+
+        // ── Hours worked row (live) ───────────────────────
+        hoursWorkedValue = new Label(auth_util.getHoursWorked());
+        hoursWorkedValue.setStyle(valueStyle());
+
+        Label hoursIcon = buildIconLabel(FontAwesomeSolid.CLOCK);
+        Label hoursKey  = buildKeyLabel("Hours Worked");
+
+        HBox hoursRow = new HBox(6, hoursIcon, hoursKey, buildRowSpacer(), hoursWorkedValue);
+        hoursRow.setAlignment(Pos.CENTER_LEFT);
+
+        // ── Spacer ────────────────────────────────────────
+        Region vSpacer = new Region();
+        VBox.setVgrow(vSpacer, Priority.ALWAYS);
+
+        // ── Time-out button ───────────────────────────────
+        FontIcon timeOutIcon = new FontIcon(FontAwesomeSolid.SIGN_OUT_ALT);
+        timeOutIcon.setIconSize(13);
+        timeOutIcon.setIconColor(Color.web("#721C24"));
+
+        Label timeOutBtn = new Label("Time Out");
+        timeOutBtn.setGraphic(timeOutIcon);
+        timeOutBtn.setGraphicTextGap(7);
+        timeOutBtn.setCursor(Cursor.HAND);
+        timeOutBtn.setPrefWidth(CARD_W - 28);
+        timeOutBtn.setPrefHeight(34);
+        timeOutBtn.setAlignment(Pos.CENTER);
+        timeOutBtn.setStyle(timeOutBtnStyle(false));
+        timeOutBtn.setOnMouseEntered(e -> timeOutBtn.setStyle(timeOutBtnStyle(true)));
+        timeOutBtn.setOnMouseExited(e  -> timeOutBtn.setStyle(timeOutBtnStyle(false)));
+        timeOutBtn.setOnMouseClicked(e -> handleTimeOut(stage));
+
+        card.getChildren().addAll(
+            headerRow,
+            divider,
+            timeInRow,
+            hoursRow,
+            vSpacer,
+            timeOutBtn
+        );
+        return card;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  SHIFT CLOCK
+    // ══════════════════════════════════════════════════════
+    private void startShiftClock() {
+        shiftClock = new Timeline(
+            new KeyFrame(Duration.seconds(1), e -> {
+                if (hoursWorkedValue != null)
+                    hoursWorkedValue.setText(auth_util.getHoursWorked());
+            })
+        );
+        shiftClock.setCycleCount(Animation.INDEFINITE);
+        shiftClock.play();
+
+        if (hoursWorkedValue != null)
+            hoursWorkedValue.setText(auth_util.getHoursWorked());
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  TIME-OUT HANDLER — shows confirmation modal
+    // ══════════════════════════════════════════════════════
+    private void handleTimeOut(Stage stage) {
+        // Snapshot the worked duration before the modal is shown
+        String hoursWorked = auth_util.getHoursWorked();
+
+        // ── Dim overlay covering the whole screen ─────────
+        Pane overlay = new Pane();
+        overlay.setPrefWidth(rootPane.getPrefWidth() > 0 ? rootPane.getPrefWidth() : stage.getWidth());
+        overlay.setPrefHeight(rootPane.getPrefHeight() > 0 ? rootPane.getPrefHeight() : stage.getHeight());
+        overlay.setMinWidth(overlay.getPrefWidth());
+        overlay.setMinHeight(overlay.getPrefHeight());
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.52);");
+
+        // ── Card ──────────────────────────────────────────
+        VBox card = new VBox(18);
+        card.setAlignment(Pos.CENTER);
+        card.setPrefWidth(MODAL_W);
+        card.setMinWidth(MODAL_W);
+        card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H);
+        card.setMinHeight(MODAL_H);
+        card.setMaxHeight(MODAL_H);
+        card.setPadding(new Insets(36, 40, 32, 40));
+        card.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 14;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
+        );
+
+        // ── Warning icon ──────────────────────────────────
+        FontIcon warnIcon = new FontIcon(FontAwesomeSolid.SIGN_OUT_ALT);
+        warnIcon.setIconSize(28);
+        warnIcon.setIconColor(Color.web("#882F39"));
+
+        // ── Heading ───────────────────────────────────────
+        Label heading = new Label("Are you sure you want to end your shift?");
+        heading.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: #222222;" +
+            "-fx-text-alignment: center;" +
+            "-fx-alignment: center;"
+        );
+        heading.setAlignment(Pos.CENTER);
+        heading.setWrapText(true);
+        heading.setMaxWidth(MODAL_W - 80);
+
+        // ── Sub-message with hours worked ─────────────────
+        Label sub = new Label("You've worked " + hoursWorked + " today.");
+        sub.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #555555;" +
+            "-fx-text-alignment: center;" +
+            "-fx-alignment: center;"
+        );
+        sub.setAlignment(Pos.CENTER);
+        sub.setWrapText(true);
+        sub.setMaxWidth(MODAL_W - 80);
+
+        // ── Buttons ───────────────────────────────────────
+        Label noBtn = new Label("No, go back");
+        noBtn.setCursor(Cursor.HAND);
+        noBtn.setPrefWidth(140);
+        noBtn.setPrefHeight(38);
+        noBtn.setAlignment(Pos.CENTER);
+        noBtn.setStyle(modalNoBtnStyle(false));
+        noBtn.setOnMouseEntered(e -> noBtn.setStyle(modalNoBtnStyle(true)));
+        noBtn.setOnMouseExited(e  -> noBtn.setStyle(modalNoBtnStyle(false)));
+        noBtn.setOnMouseClicked(e -> rootPane.getChildren().remove(overlay));
+
+        Label yesBtn = new Label("Yes, end shift");
+        yesBtn.setCursor(Cursor.HAND);
+        yesBtn.setPrefWidth(140);
+        yesBtn.setPrefHeight(38);
+        yesBtn.setAlignment(Pos.CENTER);
+        yesBtn.setStyle(modalYesBtnStyle(false));
+        yesBtn.setOnMouseEntered(e -> yesBtn.setStyle(modalYesBtnStyle(true)));
+        yesBtn.setOnMouseExited(e  -> yesBtn.setStyle(modalYesBtnStyle(false)));
+        yesBtn.setOnMouseClicked(e -> {
+            // Stop clock
+            if (shiftClock != null) shiftClock.stop();
+
+            // Log to console (replace with DB insert)
+            System.out.println("[TIME-OUT] User     : " + auth_util.getCurrentName());
+            System.out.println("[TIME-OUT] Shift In : " + auth_util.getShiftStartFullFormatted());
+            System.out.println("[TIME-OUT] Duration : " + hoursWorked);
+
+            // TODO: insert into time_logs DB table here before logout
+            auth_util.logout();
+
+            // Exit the application
+            stage.close();
+            javafx.application.Platform.exit();
+        });
+
+        HBox btnRow = new HBox(16, noBtn, yesBtn);
+        btnRow.setAlignment(Pos.CENTER);
+
+        card.getChildren().addAll(warnIcon, heading, sub, btnRow);
+
+        // ── Centre the card in the overlay ────────────────
+        StackPane centred = new StackPane(card);
+        centred.setPrefWidth(overlay.getPrefWidth());
+        centred.setPrefHeight(overlay.getPrefHeight());
+        centred.setMinWidth(overlay.getPrefWidth());
+        centred.setMinHeight(overlay.getPrefHeight());
+        centred.setAlignment(Pos.CENTER);
+        overlay.getChildren().add(centred);
+
+        rootPane.getChildren().add(overlay);
     }
 
     // ══════════════════════════════════════════════════════
@@ -240,6 +524,18 @@ public class pos_records_window_ui {
 
     private void showCustomers() {
         contentPane.getChildren().setAll(customersContents.getView());
+    }
+
+    private void showPayments() {
+        contentPane.getChildren().setAll(paymentsContents.getView());
+    }
+
+    private void showTimeLogs() {
+        contentPane.getChildren().setAll(timelogsContents.getView());
+    }
+
+    private void showEmployees() {
+        contentPane.getChildren().setAll(employeesContents.getView());  // ← NEW
     }
 
     private void switchContent(String tab) {
@@ -260,11 +556,6 @@ public class pos_records_window_ui {
 
     // ══════════════════════════════════════════════════════
     //  NAV BUTTON FACTORY
-    //
-    //  unlocked = true  → normal, hoverable, clickable
-    //  unlocked = false → greyed icon + text, lock icon on
-    //                     the right, no hover, no cursor hand,
-    //                     no click handler (never wired above)
     // ══════════════════════════════════════════════════════
     private HBox createNavButton(String label, String iconPath,
                                   double iconSize, double fontSize,
@@ -277,7 +568,6 @@ public class pos_records_window_ui {
         Label text = new Label(label);
 
         if (unlocked) {
-            // ── Active / unlocked row ─────────────────────
             text.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
                 "-fx-font-size: " + fontSize + "px;" +
@@ -291,19 +581,14 @@ public class pos_records_window_ui {
             row.setPrefWidth(CARD_W - 12);
             row.setStyle("-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;");
             row.setCursor(Cursor.HAND);
-
             row.setOnMouseEntered(e -> row.setStyle(
-                "-fx-background-color: " + HOVER_BG + "; -fx-background-radius: 10;"
-            ));
+                "-fx-background-color: " + HOVER_BG + "; -fx-background-radius: 10;"));
             row.setOnMouseExited(e -> row.setStyle(
-                "-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;"
-            ));
+                "-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;"));
             return row;
 
         } else {
-            // ── Locked row ────────────────────────────────
             icon.setOpacity(0.25);
-
             text.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
                 "-fx-font-size: " + fontSize + "px;" +
@@ -311,7 +596,6 @@ public class pos_records_window_ui {
                 "-fx-text-fill: #C0C0C0;"
             );
 
-            // Spacer pushes lock icon to the far right
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -323,13 +607,9 @@ public class pos_records_window_ui {
             row.setAlignment(Pos.CENTER_LEFT);
             row.setPadding(new Insets(6, 12, 6, 30));
             row.setPrefWidth(CARD_W - 12);
-            // Slightly tinted background so the row visually reads as disabled
             row.setStyle("-fx-background-color: #FAF3F4; -fx-background-radius: 10;");
             row.setCursor(Cursor.DEFAULT);
-            // No mouse-enter/exit handlers → no hover effect
-            // No click handlers → never wired in start()
 
-            // Tooltip on hover so the user understands why it is disabled
             Tooltip tip = new Tooltip("For managers only");
             tip.setShowDelay(Duration.millis(200));
             tip.setStyle(
@@ -341,8 +621,107 @@ public class pos_records_window_ui {
                 "-fx-padding: 4 10 4 10;"
             );
             Tooltip.install(row, tip);
-
             return row;
         }
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  CARD 3 HELPER BUILDERS
+    // ══════════════════════════════════════════════════════
+    private Label buildInfoRow(FontAwesomeSolid iconCode, String key, String value) {
+        Label iconLbl  = buildIconLabel(iconCode);
+        Label keyLbl   = buildKeyLabel(key);
+        Label valueLbl = new Label(value);
+        valueLbl.setStyle(valueStyle());
+
+        HBox row = new HBox(6, iconLbl, keyLbl, buildRowSpacer(), valueLbl);
+        row.setAlignment(Pos.CENTER_LEFT);
+
+        Label wrapper = new Label();
+        wrapper.setGraphic(row);
+        wrapper.setPadding(Insets.EMPTY);
+        return wrapper;
+    }
+
+    private Label buildIconLabel(FontAwesomeSolid iconCode) {
+        FontIcon fi = new FontIcon(iconCode);
+        fi.setIconSize(12);
+        fi.setIconColor(Color.web(ACCENT));
+        Label lbl = new Label();
+        lbl.setGraphic(fi);
+        return lbl;
+    }
+
+    private Label buildKeyLabel(String text) {
+        Label lbl = new Label(text);
+        lbl.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 11px;" +
+            "-fx-text-fill: #AA6670;"
+        );
+        return lbl;
+    }
+
+    private Region buildRowSpacer() {
+        Region r = new Region();
+        HBox.setHgrow(r, Priority.ALWAYS);
+        return r;
+    }
+
+    private String valueStyle() {
+        return "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 12px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: #333333;";
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  STYLE HELPERS
+    // ══════════════════════════════════════════════════════
+    private String cardStyle() {
+        return "-fx-background-color: white;" +
+               "-fx-background-radius: 18;" +
+               "-fx-border-color: #882F39;" +
+               "-fx-border-width: 1.5;" +
+               "-fx-border-radius: 18;";
+    }
+
+    private String timeOutBtnStyle(boolean hovered) {
+        return "-fx-background-color: " + (hovered ? "#F8D7DA" : "#FDF0F1") + ";" +
+               "-fx-background-radius: 9;" +
+               "-fx-border-color: #721C24;" +
+               "-fx-border-radius: 9;" +
+               "-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: #721C24;" +
+               "-fx-cursor: hand;";
+    }
+
+    private String modalNoBtnStyle(boolean hovered) {
+        return "-fx-background-color: " + (hovered ? "#E9ECEF" : "#F8F9FA") + ";" +
+               "-fx-background-radius: 8;" +
+               "-fx-border-color: #CCCCCC;" +
+               "-fx-border-radius: 8;" +
+               "-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: #555555;" +
+               "-fx-cursor: hand;";
+    }
+
+    private String modalYesBtnStyle(boolean hovered) {
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";" +
+               "-fx-background-radius: 8;" +
+               "-fx-border-color: transparent;" +
+               "-fx-border-radius: 8;" +
+               "-fx-border-width: 0;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: white;" +
+               "-fx-cursor: hand;";
     }
 }

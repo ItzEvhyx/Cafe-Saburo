@@ -3,7 +3,6 @@ package frontend;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
-import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.layout.HBox;
@@ -24,20 +23,28 @@ import java.io.FileWriter;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-public class orders_contents {
+public class timelogs_contents {
 
+    // ══════════════════════════════════════════════════════
+    //  LAYOUT CONSTANTS
+    // ══════════════════════════════════════════════════════
     private static final double TOP_PADDING  = 20;
     private static final double SIDE_PADDING = 24;
     private static final double HEADER_H     = 56;
-    private static final double COL_ORDER_ID = 0.16;
-    private static final double COL_CUST_ID  = 0.24;
-    private static final double COL_STATUS   = 0.30;
-    private static final double COL_PAYMENT  = 0.30;
+
+    private static final double COL_LOG_ID      = 0.10;
+    private static final double COL_EMPLOYEE_ID = 0.15;
+    private static final double COL_EMP_NAME    = 0.25;
+    private static final double COL_TIME_IN     = 0.25;
+    private static final double COL_TIME_OUT    = 0.25;
+
     private static final double ROW_H        = 44;
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
@@ -46,27 +53,27 @@ public class orders_contents {
     private static final double MODAL_W = 440;
     private static final double MODAL_H = 260;
 
+    // ══════════════════════════════════════════════════════
+    //  STYLE CONSTANTS
+    // ══════════════════════════════════════════════════════
     private static final String ACCENT       = "#882F39";
     private static final String FONT_FAMILY  = "Aleo";
     private static final String TABLE_BORDER = "#882F39";
     private static final String ROW_ALT_BG   = "#FDF5F6";
     private static final String ROW_WHITE_BG = "white";
     private static final String HEADER_BG    = "#F5E8EA";
-    private static final String PILL_PENDING_BG   = "#FFF3CD";
-    private static final String PILL_PENDING_FG   = "#856404";
-    private static final String PILL_COMPLETED_BG = "#D4EDDA";
-    private static final String PILL_COMPLETED_FG = "#155724";
-    private static final String PILL_CANCELLED_BG = "#F8D7DA";
-    private static final String PILL_CANCELLED_FG = "#721C24";
-    private static final String PILL_PREPARING_BG = "#D1ECF1";
-    private static final String PILL_PREPARING_FG = "#0C5460";
 
+    // ── Date format for display ───────────────────────────
+    private static final SimpleDateFormat DISPLAY_FMT = new SimpleDateFormat("MMM dd, yyyy hh:mm a");
+
+    // ══════════════════════════════════════════════════════
+    //  STATE
+    // ══════════════════════════════════════════════════════
     private final double     totalW;
     private final double     totalH;
     private final Connection conn;
 
     private String         currentTab  = "active";
-    private boolean        editMode    = false;
     private boolean        archiveMode = false;
     private Pane           root;
     private StackPane      stackRoot;
@@ -74,7 +81,6 @@ public class orders_contents {
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label editBtn;
     private Label archiveBtn;
     private Label archiveAllBtn;
     private Label confirmBtn;
@@ -97,19 +103,29 @@ public class orders_contents {
         fontsLoaded = true;
     }
 
-    public orders_contents(double totalW, double totalH, Connection conn) {
+    public timelogs_contents(double totalW, double totalH, Connection conn) {
         this.totalW = totalW;
         this.totalH = totalH;
         this.conn   = conn;
         loadFonts();
     }
 
-    public void prependOrder(String orderId, String customerId, String paymentMethod) {
+    // ══════════════════════════════════════════════════════
+    //  PUBLIC LIVE-UPDATE API
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * Prepends a new time log row to the active view.
+     * Call this after an employee successfully times in.
+     */
+    public void prependLog(String logId, String employeeId, String employeeName,
+                            String timeIn, String timeOut) {
         String[] newRow = new String[]{
-            orderId,
-            customerId,
-            "Pending",
-            paymentMethod != null ? paymentMethod : "Cash"
+            logId,
+            employeeId,
+            employeeName != null ? employeeName : "--",
+            timeIn       != null ? timeIn       : "--",
+            timeOut      != null ? timeOut       : "--"
         };
         if (root != null && currentTab.equals("active")) {
             cachedRows.add(0, newRow);
@@ -117,24 +133,36 @@ public class orders_contents {
         }
     }
 
-    private List<String[]> fetchOrders(String tab) {
+    // ══════════════════════════════════════════════════════
+    //  DB OPERATIONS
+    // ══════════════════════════════════════════════════════
+
+    private List<String[]> fetchLogs(String tab) {
         List<String[]> rows = new ArrayList<>();
         if (conn == null) return rows;
         try { if (conn.isClosed()) return rows; } catch (Exception e) { return rows; }
+        // Joins to Employees so employee_name is always current, falls back to
+        // the denormalised column if the employee row is somehow missing.
         String sql =
-            "SELECT order_id, customer_id, order_status, payment_type " +
-            "FROM dbo.Orders " +
-            "WHERE is_deleted = 0 AND status = ? " +
-            "ORDER BY order_date DESC";
+            "SELECT t.log_id, t.employee_id, " +
+            "       COALESCE(e.employee_name, t.employee_name) AS employee_name, " +
+            "       t.time_in, t.time_out " +
+            "FROM dbo.TimeLogs t " +
+            "LEFT JOIN dbo.Employees e ON e.employee_id = t.employee_id " +
+            "WHERE t.is_deleted = 0 AND t.status = ? " +
+            "ORDER BY t.time_in DESC";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, tab);
             ResultSet rs = ps.executeQuery();
             while (rs.next()) {
+                Timestamp timeIn  = rs.getTimestamp("time_in");
+                Timestamp timeOut = rs.getTimestamp("time_out");
                 rows.add(new String[]{
-                    rs.getString("order_id")     != null ? rs.getString("order_id")     : "—",
-                    rs.getString("customer_id")  != null ? rs.getString("customer_id")  : "—",
-                    rs.getString("order_status") != null ? rs.getString("order_status") : "—",
-                    rs.getString("payment_type") != null ? rs.getString("payment_type") : "—"
+                    rs.getString("log_id")       != null ? rs.getString("log_id")       : "—",
+                    rs.getString("employee_id")  != null ? rs.getString("employee_id")  : "—",
+                    rs.getString("employee_name") != null ? rs.getString("employee_name") : "—",
+                    timeIn  != null ? DISPLAY_FMT.format(timeIn)  : "—",
+                    timeOut != null ? DISPLAY_FMT.format(timeOut) : "Still in"
                 });
             }
             rs.close();
@@ -142,23 +170,12 @@ public class orders_contents {
         return rows;
     }
 
-    private void updateOrderStatus(String orderId, String newStatus) {
-        if (conn == null) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.Orders SET order_status = ? WHERE order_id = ?")) {
-            ps.setString(1, newStatus);
-            ps.setString(2, orderId);
-            ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
     private void archiveSelected(Set<String> ids) {
         if (conn == null || ids.isEmpty()) return;
         try { if (conn.isClosed()) return; } catch (Exception e) { return; }
         for (String id : ids) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Orders SET status = 'archived' WHERE order_id = ? AND is_deleted = 0")) {
+                    "UPDATE dbo.TimeLogs SET status = 'archived' WHERE log_id = ? AND is_deleted = 0")) {
                 ps.setString(1, id);
                 ps.executeUpdate();
             } catch (Exception e) { e.printStackTrace(); }
@@ -170,7 +187,7 @@ public class orders_contents {
         try { if (conn.isClosed()) return; } catch (Exception e) { return; }
         for (String id : ids) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Orders SET status = 'active' WHERE order_id = ? AND is_deleted = 0")) {
+                    "UPDATE dbo.TimeLogs SET status = 'active' WHERE log_id = ? AND is_deleted = 0")) {
                 ps.setString(1, id);
                 ps.executeUpdate();
             } catch (Exception e) { e.printStackTrace(); }
@@ -181,7 +198,7 @@ public class orders_contents {
         if (conn == null) return;
         try { if (conn.isClosed()) return; } catch (Exception e) { return; }
         try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM dbo.Orders WHERE is_deleted = 0 AND status = ?")) {
+                "DELETE FROM dbo.TimeLogs WHERE is_deleted = 0 AND status = ?")) {
             ps.setString(1, currentTab);
             ps.executeUpdate();
         } catch (Exception e) { e.printStackTrace(); }
@@ -190,18 +207,18 @@ public class orders_contents {
     private void exportCsv() {
         if (cachedRows.isEmpty()) return;
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Save Order History as CSV");
-        chooser.setInitialFileName("orders_" + currentTab + ".csv");
+        chooser.setTitle("Save Time Logs as CSV");
+        chooser.setInitialFileName("timelogs_" + currentTab + ".csv");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
         Stage stage = null;
         try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
         File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
         if (file == null) return;
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Order ID,Customer ID,Order Status,Payment Type");
+            writer.write("Log ID,Employee ID,Employee Name,Time In,Time Out");
             writer.newLine();
             for (String[] row : cachedRows) {
-                writer.write(escapeCsv(row[0])+","+escapeCsv(row[1])+","+escapeCsv(row[2])+","+escapeCsv(row[3]));
+                writer.write(escapeCsv(row[0])+","+escapeCsv(row[1])+","+escapeCsv(row[2])+","+escapeCsv(row[3])+","+escapeCsv(row[4]));
                 writer.newLine();
             }
         } catch (Exception e) { e.printStackTrace(); }
@@ -214,6 +231,9 @@ public class orders_contents {
         return value;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  MAIN VIEW
+    // ══════════════════════════════════════════════════════
     public Pane getView() {
         stackRoot = new StackPane();
         stackRoot.setPrefWidth(totalW);
@@ -227,37 +247,16 @@ public class orders_contents {
         double btnH=36, btnY=TOP_PADDING+10, iconW=36, gap=8,
                tabW=90, archAllW=100, confirmW=90, csvW=120;
 
-        Label title = new Label("Order History");
+        // ── Title ─────────────────────────────────────────
+        Label title = new Label("Time Logs");
         title.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 36px;" +
             "-fx-font-weight: 800;" +
-            "-fx-text-fill: "+ACCENT+";"
+            "-fx-text-fill: " + ACCENT + ";"
         );
 
-        FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
-        penIcon.setIconSize(15);
-        penIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-        editBtn = new Label();
-        editBtn.setGraphic(penIcon);
-        editBtn.setCursor(javafx.scene.Cursor.HAND);
-        editBtn.setStyle(editBtnStyle(false));
-        editBtn.setPrefHeight(btnH); editBtn.setPrefWidth(iconW);
-        editBtn.setAlignment(Pos.CENTER);
-        editBtn.setOnMouseEntered(e -> editBtn.setStyle(editBtnHoverStyle(editMode)));
-        editBtn.setOnMouseExited(e  -> editBtn.setStyle(editBtnStyle(editMode)));
-        editBtn.setOnMouseClicked(e -> {
-            editMode = !editMode;
-            FontIcon icon = new FontIcon(editMode ? FontAwesomeSolid.CHECK : FontAwesomeSolid.PEN);
-            icon.setIconSize(15);
-            icon.setIconColor(editMode
-                ? javafx.scene.paint.Color.web("#155724")
-                : javafx.scene.paint.Color.web(ACCENT));
-            editBtn.setGraphic(icon);
-            editBtn.setStyle(editBtnStyle(editMode));
-            rebuildTable();
-        });
-
+        // ── Archive icon button ───────────────────────────
         FontIcon boxIcon = new FontIcon(FontAwesomeSolid.ARCHIVE);
         boxIcon.setIconSize(15);
         boxIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -271,18 +270,20 @@ public class orders_contents {
         archiveBtn.setOnMouseExited(e  -> archiveBtn.setStyle(archiveBtnStyle(archiveMode)));
         archiveBtn.setOnMouseClicked(e -> toggleArchiveMode());
 
-        HBox titleRow = new HBox(gap, title, editBtn, archiveBtn);
+        HBox titleRow = new HBox(gap, title, archiveBtn);
         titleRow.setAlignment(Pos.CENTER_LEFT);
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
+        // ── Right-side button layout ──────────────────────
         double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX   - gap - csvW;
-        double archivedTabX = exportCsvX - gap - tabW;
+        double exportCsvX   = deleteX      - gap - csvW;
+        double archivedTabX = exportCsvX   - gap - tabW;
         double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX - gap - confirmW;
-        double archAllX     = confirmX   - gap - archAllW;
+        double confirmX     = activeTabX   - gap - confirmW;
+        double archAllX     = confirmX     - gap - archAllW;
 
+        // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -297,12 +298,13 @@ public class orders_contents {
         deleteBtn.setOnMouseExited(e  -> deleteBtn.setStyle(deleteBtnStyle(false)));
         deleteBtn.setOnMouseClicked(e ->
             stackRoot.getChildren().add(buildConfirmModal(
-                "Orders ("+currentTab+")",
-                "This will permanently remove all orders in this view.\nThis action cannot be undone.",
+                "Time Logs ("+currentTab+")",
+                "This will permanently remove all time logs in this view.\nThis action cannot be undone.",
                 () -> { hardDeleteAll(); cachedRows.clear(); selectedIds.clear(); rebuildTable(); }
             ))
         );
 
+        // ── Export CSV button ─────────────────────────────
         exportCsvBtn = new Label("Export CSV");
         FontIcon csvIcon = new FontIcon(FontAwesomeSolid.FILE_DOWNLOAD);
         csvIcon.setIconSize(13);
@@ -318,6 +320,7 @@ public class orders_contents {
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
         exportCsvBtn.setOnMouseClicked(e -> exportCsv());
 
+        // ── Active / Archived tab buttons ─────────────────
         activeTabBtn   = buildTabLabel("Active",   true);
         activeTabBtn.setLayoutX(activeTabX);   activeTabBtn.setLayoutY(btnY);
         archivedTabBtn = buildTabLabel("Archived", false);
@@ -330,6 +333,7 @@ public class orders_contents {
         archivedTabBtn.setOnMouseExited(e  -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
+        // ── Archive All button ────────────────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW); archiveAllBtn.setPrefHeight(btnH);
@@ -345,6 +349,7 @@ public class orders_contents {
             rebuildTable();
         });
 
+        // ── Confirm button ────────────────────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW); confirmBtn.setPrefHeight(btnH);
@@ -357,20 +362,21 @@ public class orders_contents {
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
             if (currentTab.equals("active")) archiveSelected(selectedIds);
-            else restoreSelected(selectedIds);
+            else                             restoreSelected(selectedIds);
             selectedIds.clear(); archiveMode = false;
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
-            cachedRows = fetchOrders(currentTab);
+            cachedRows = fetchLogs(currentTab);
             rebuildTable();
         });
 
+        // ── Table ─────────────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        cachedRows  = fetchOrders("active");
+        cachedRows  = fetchLogs("active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(titleRow, archiveAllBtn, confirmBtn,
@@ -379,6 +385,9 @@ public class orders_contents {
         return stackRoot;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  ARCHIVE MODE TOGGLE
+    // ══════════════════════════════════════════════════════
     private void toggleArchiveMode() {
         archiveMode = !archiveMode;
         selectedIds.clear();
@@ -397,23 +406,19 @@ public class orders_contents {
         archiveBtn.setGraphic(icon);
     }
 
+    // ══════════════════════════════════════════════════════
+    //  TAB SWITCHING
+    // ══════════════════════════════════════════════════════
     private void switchTab(String tab) {
         if (currentTab.equals(tab)) return;
-        currentTab = tab; editMode = false; archiveMode = false;
-        selectedIds.clear();
-        FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
-        penIcon.setIconSize(15);
-        penIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-        editBtn.setGraphic(penIcon);
-        editBtn.setStyle(editBtnStyle(false));
-        editBtn.setVisible(tab.equals("active"));
+        currentTab = tab; archiveMode = false; selectedIds.clear();
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
         archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
-        cachedRows = fetchOrders(tab);
+        cachedRows = fetchLogs(tab);
         rebuildTable();
     }
 
@@ -426,65 +431,42 @@ public class orders_contents {
         return lbl;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  CONFIRMATION MODAL
+    // ══════════════════════════════════════════════════════
     private Pane buildConfirmModal(String context, String subMessage, Runnable onConfirm) {
         Pane overlay = new Pane();
-        overlay.setPrefWidth(totalW);
-        overlay.setPrefHeight(totalH);
-        overlay.setMinWidth(totalW);
-        overlay.setMinHeight(totalH);
-        overlay.setMaxWidth(totalW);
-        overlay.setMaxHeight(totalH);
+        overlay.setPrefWidth(totalW); overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);  overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);  overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(MODAL_W);
-        card.setMinWidth(MODAL_W);
-        card.setMaxWidth(MODAL_W);
-        card.setPrefHeight(MODAL_H);
-        card.setMinHeight(MODAL_H);
-        card.setMaxHeight(MODAL_H);
+        card.setPrefWidth(MODAL_W); card.setMinWidth(MODAL_W); card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H); card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
-        card.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 14;" +
-            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
-        );
+        card.setStyle("-fx-background-color: white;-fx-background-radius: 14;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);");
 
         FontIcon warnIcon = new FontIcon(FontAwesomeSolid.EXCLAMATION_TRIANGLE);
         warnIcon.setIconSize(28);
         warnIcon.setIconColor(javafx.scene.paint.Color.web("#882F39"));
 
         Label heading = new Label("Are you sure you want to delete\nall entries for " + context + "?");
-        heading.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
-            "-fx-font-size: 14px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: #222222;" +
-            "-fx-text-alignment: center;" +
-            "-fx-alignment: center;"
-        );
-        heading.setAlignment(Pos.CENTER);
-        heading.setWrapText(true);
-        heading.setMaxWidth(MODAL_W - 80);
+        heading.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;-fx-font-weight: bold;" +
+            "-fx-text-fill: #222222;-fx-text-alignment: center;-fx-alignment: center;");
+        heading.setAlignment(Pos.CENTER); heading.setWrapText(true); heading.setMaxWidth(MODAL_W - 80);
 
         Label sub = new Label(subMessage);
-        sub.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
-            "-fx-font-size: 12px;" +
-            "-fx-text-fill: #777777;" +
-            "-fx-text-alignment: center;" +
-            "-fx-alignment: center;"
-        );
-        sub.setAlignment(Pos.CENTER);
-        sub.setWrapText(true);
-        sub.setMaxWidth(MODAL_W - 80);
+        sub.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
+            "-fx-text-fill: #777777;-fx-text-alignment: center;-fx-alignment: center;");
+        sub.setAlignment(Pos.CENTER); sub.setWrapText(true); sub.setMaxWidth(MODAL_W - 80);
 
         Label noBtn = new Label("No, cancel");
         noBtn.setCursor(javafx.scene.Cursor.HAND);
         noBtn.setPrefWidth(140); noBtn.setPrefHeight(38);
-        noBtn.setAlignment(Pos.CENTER);
-        noBtn.setStyle(modalNoBtnStyle(false));
+        noBtn.setAlignment(Pos.CENTER); noBtn.setStyle(modalNoBtnStyle(false));
         noBtn.setOnMouseEntered(e -> noBtn.setStyle(modalNoBtnStyle(true)));
         noBtn.setOnMouseExited(e  -> noBtn.setStyle(modalNoBtnStyle(false)));
         noBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
@@ -492,29 +474,27 @@ public class orders_contents {
         Label yesBtn = new Label("Yes, delete");
         yesBtn.setCursor(javafx.scene.Cursor.HAND);
         yesBtn.setPrefWidth(140); yesBtn.setPrefHeight(38);
-        yesBtn.setAlignment(Pos.CENTER);
-        yesBtn.setStyle(modalYesBtnStyle(false));
+        yesBtn.setAlignment(Pos.CENTER); yesBtn.setStyle(modalYesBtnStyle(false));
         yesBtn.setOnMouseEntered(e -> yesBtn.setStyle(modalYesBtnStyle(true)));
         yesBtn.setOnMouseExited(e  -> yesBtn.setStyle(modalYesBtnStyle(false)));
         yesBtn.setOnMouseClicked(e -> { stackRoot.getChildren().remove(overlay); onConfirm.run(); });
 
         HBox btnRow = new HBox(16, noBtn, yesBtn);
         btnRow.setAlignment(Pos.CENTER);
-
         card.getChildren().addAll(warnIcon, heading, sub, btnRow);
 
         StackPane centred = new StackPane(card);
-        centred.setPrefWidth(totalW);
-        centred.setPrefHeight(totalH);
-        centred.setMinWidth(totalW);
-        centred.setMinHeight(totalH);
-        centred.setMaxWidth(totalW);
-        centred.setMaxHeight(totalH);
+        centred.setPrefWidth(totalW); centred.setPrefHeight(totalH);
+        centred.setMinWidth(totalW);  centred.setMinHeight(totalH);
+        centred.setMaxWidth(totalW);  centred.setMaxHeight(totalH);
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);
         return overlay;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  REBUILD TABLE
+    // ══════════════════════════════════════════════════════
     private void rebuildTable() {
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
@@ -537,6 +517,9 @@ public class orders_contents {
         return sp;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  TABLE BUILDER
+    // ══════════════════════════════════════════════════════
     private VBox buildTable(double tableW, List<String[]> rows) {
         double dataW = archiveMode ? tableW - CHECKBOX_COL : tableW;
         VBox table = new VBox(0);
@@ -545,15 +528,15 @@ public class orders_contents {
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);");
         table.getChildren().add(buildHeaderRow(tableW, dataW));
         if (rows.isEmpty()) {
-            Label empty = new Label(currentTab.equals("archived") ? "No archived orders." : "No orders found.");
+            Label empty = new Label(currentTab.equals("archived") ? "No archived time logs." : "No time logs found.");
             empty.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
                 "-fx-text-fill: #AAAAAA;-fx-padding: 24 0 24 16;");
             table.getChildren().add(empty);
         } else {
             for (int i = 0; i < rows.size(); i++) {
-                String[] order = rows.get(i);
+                String[] log = rows.get(i);
                 table.getChildren().add(buildDataRow(
-                    order[0], order[1], order[2], order[3],
+                    log[0], log[1], log[2], log[3], log[4],
                     i % 2 == 0 ? ROW_WHITE_BG : ROW_ALT_BG,
                     tableW, dataW, i == rows.size() - 1));
             }
@@ -568,10 +551,11 @@ public class orders_contents {
             "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;-fx-border-width: 0 0 1.5 0;");
         row.setAlignment(Pos.CENTER_LEFT);
         row.getChildren().addAll(
-            buildHeaderCell("Order ID",     dataW * COL_ORDER_ID), buildColDivider(),
-            buildHeaderCell("Customer ID",  dataW * COL_CUST_ID),  buildColDivider(),
-            buildHeaderCell("Order Status", dataW * COL_STATUS),   buildColDivider(),
-            buildHeaderCell("Payment Type", dataW * COL_PAYMENT)
+            buildHeaderCell("Log ID",        dataW * COL_LOG_ID),      buildColDivider(),
+            buildHeaderCell("Employee ID",   dataW * COL_EMPLOYEE_ID), buildColDivider(),
+            buildHeaderCell("Employee Name", dataW * COL_EMP_NAME),    buildColDivider(),
+            buildHeaderCell("Time In",       dataW * COL_TIME_IN),     buildColDivider(),
+            buildHeaderCell("Time Out",      dataW * COL_TIME_OUT)
         );
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
@@ -592,32 +576,31 @@ public class orders_contents {
         return lbl;
     }
 
-    private HBox buildDataRow(String orderId, String custId, String status,
-                               String payment, String bg, double tableW, double dataW, boolean isLast) {
+    private HBox buildDataRow(String logId, String employeeId, String employeeName,
+                               String timeIn, String timeOut, String bg,
+                               double tableW, double dataW, boolean isLast) {
         HBox row = new HBox(0);
         row.setPrefHeight(ROW_H); row.setAlignment(Pos.CENTER_LEFT);
         String bottomRadius = isLast ? "0 0 10 10" : "0";
         String borderBottom = isLast ? "0" : "1";
-        boolean selected = selectedIds.contains(orderId);
+        boolean selected = selectedIds.contains(logId);
         row.setStyle(rowStyle(selected ? "#FDE8EA" : bg, bottomRadius, borderBottom));
-        row.setOnMouseEntered(e -> { if (!selectedIds.contains(orderId)) row.setStyle(rowStyle("#F5E8EA", bottomRadius, borderBottom)); });
-        row.setOnMouseExited(e  -> row.setStyle(rowStyle(selectedIds.contains(orderId) ? "#FDE8EA" : bg, bottomRadius, borderBottom)));
+        row.setOnMouseEntered(e -> { if (!selectedIds.contains(logId)) row.setStyle(rowStyle("#F5E8EA", bottomRadius, borderBottom)); });
+        row.setOnMouseExited(e  -> row.setStyle(rowStyle(selectedIds.contains(logId) ? "#FDE8EA" : bg, bottomRadius, borderBottom)));
         row.getChildren().addAll(
-            buildTextCell(orderId, dataW * COL_ORDER_ID, true), buildColDivider(),
-            buildTextCell(custId,  dataW * COL_CUST_ID,  false), buildColDivider(),
-            (editMode && currentTab.equals("active"))
-                ? buildStatusDropdown(orderId, status, dataW * COL_STATUS)
-                : buildStatusCell(status, dataW * COL_STATUS),
-            buildColDivider(),
-            buildTextCell(payment, dataW * COL_PAYMENT, false)
+            buildTextCell(logId,        dataW * COL_LOG_ID,      true),  buildColDivider(),
+            buildTextCell(employeeId,   dataW * COL_EMPLOYEE_ID, false), buildColDivider(),
+            buildTextCell(employeeName, dataW * COL_EMP_NAME,    false), buildColDivider(),
+            buildTextCell(timeIn,       dataW * COL_TIME_IN,     false), buildColDivider(),
+            buildTextCell(timeOut,      dataW * COL_TIME_OUT,    false)
         );
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
             CheckBox cb = new CheckBox();
             cb.setSelected(selected); cb.setStyle("-fx-cursor: hand;");
             cb.setOnAction(e -> {
-                if (cb.isSelected()) { selectedIds.add(orderId);    row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom)); }
-                else                 { selectedIds.remove(orderId); row.setStyle(rowStyle(bg, bottomRadius, borderBottom)); }
+                if (cb.isSelected()) { selectedIds.add(logId);    row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom)); }
+                else                 { selectedIds.remove(logId); row.setStyle(rowStyle(bg, bottomRadius, borderBottom)); }
             });
             HBox cbCell = new HBox(cb);
             cbCell.setPrefWidth(CHECKBOX_COL); cbCell.setPrefHeight(ROW_H);
@@ -627,41 +610,9 @@ public class orders_contents {
         return row;
     }
 
-    private HBox buildStatusCell(String status, double width) {
-        if (status == null) status = "—";
-        String[] colors = pillColors(status);
-        Label pill = new Label(status);
-        pill.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;-fx-font-weight: bold;" +
-            "-fx-text-fill: "+colors[1]+";-fx-background-color: "+colors[0]+";" +
-            "-fx-background-radius: 20;-fx-padding: 4 14 4 14;");
-        HBox cell = new HBox(pill);
-        cell.setPrefWidth(width); cell.setPrefHeight(ROW_H);
-        cell.setPadding(new Insets(0, 0, 0, 16));
-        cell.setAlignment(Pos.CENTER_LEFT);
-        return cell;
-    }
-
-    private HBox buildStatusDropdown(String orderId, String currentStatus, double width) {
-        ComboBox<String> combo = new ComboBox<>();
-        combo.getItems().addAll("Pending", "Preparing", "Completed", "Cancelled");
-        combo.setValue(currentStatus != null ? currentStatus : "Pending");
-        combo.setPrefWidth(width - 20);
-        combo.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
-            "-fx-background-color: white;-fx-border-color: "+ACCENT+";" +
-            "-fx-border-radius: 6;-fx-background-radius: 6;-fx-cursor: hand;");
-        combo.setOnAction(e -> {
-            String chosen = combo.getValue();
-            if (chosen == null || chosen.equals(currentStatus)) return;
-            updateOrderStatus(orderId, chosen);
-            for (String[] row : cachedRows) { if (row[0].equals(orderId)) { row[2] = chosen; break; } }
-        });
-        HBox cell = new HBox(combo);
-        cell.setPrefWidth(width); cell.setPrefHeight(ROW_H);
-        cell.setPadding(new Insets(0, 0, 0, 10));
-        cell.setAlignment(Pos.CENTER_LEFT);
-        return cell;
-    }
-
+    // ══════════════════════════════════════════════════════
+    //  HELPERS
+    // ══════════════════════════════════════════════════════
     private String rowStyle(String bg, String bottomRadius, String borderBottom) {
         return "-fx-background-color: "+bg+";-fx-background-radius: "+bottomRadius+";" +
                "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;" +
@@ -686,16 +637,9 @@ public class orders_contents {
         return div;
     }
 
-    private String[] pillColors(String status) {
-        if (status == null) return new String[]{ PILL_PENDING_BG, PILL_PENDING_FG };
-        return switch (status.toLowerCase()) {
-            case "completed" -> new String[]{ PILL_COMPLETED_BG, PILL_COMPLETED_FG };
-            case "cancelled" -> new String[]{ PILL_CANCELLED_BG, PILL_CANCELLED_FG };
-            case "preparing" -> new String[]{ PILL_PREPARING_BG, PILL_PREPARING_FG };
-            default          -> new String[]{ PILL_PENDING_BG,   PILL_PENDING_FG   };
-        };
-    }
-
+    // ══════════════════════════════════════════════════════
+    //  STYLE HELPERS
+    // ══════════════════════════════════════════════════════
     private String tabBtnStyle(boolean selected) {
         return selected
             ? "-fx-background-color: "+ACCENT+";-fx-background-radius: 8;-fx-font-family: '"+FONT_FAMILY+"';" +
@@ -724,14 +668,6 @@ public class orders_contents {
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
                "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: white;-fx-cursor: hand;";
-    }
-    private String editBtnStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#D4EDDA":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
-    }
-    private String editBtnHoverStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#C3E6CB":"#EDD5D8")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String deleteBtnStyle(boolean hovered) {
         return "-fx-background-color: "+(hovered?"#F8D7DA":"#FDF0F1")+";-fx-background-radius: 8;" +

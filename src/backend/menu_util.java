@@ -98,6 +98,9 @@ public class menu_util {
 
     // ══════════════════════════════════════════════════════
     //  SUBMIT RESULT
+    //  amountFormatted uses plain "%,.2f" (e.g. "1,234.00")
+    //  — no peso symbol — to match what fetchPayments produces,
+    //  avoiding JavaFX label encoding issues with ₱.
     // ══════════════════════════════════════════════════════
     public static class SubmitResult {
         public final boolean success;
@@ -105,15 +108,28 @@ public class menu_util {
         public final String  customerId;
         public final String  customerName;
         public final String  paymentMethod;
+        /** Generated payment_id inserted into dbo.Payments (null on failure). */
+        public final String  paymentId;
+        /**
+         * Total formatted as a plain number string, e.g. "1,234.00".
+         * No peso symbol — payments_contents displays it as-is.
+         */
+        public final String  amountFormatted;
 
-        public SubmitResult(boolean success, String orderId,
-                            String customerId, String customerName,
-                            String paymentMethod) {
-            this.success       = success;
-            this.orderId       = orderId;
-            this.customerId    = customerId;
-            this.customerName  = customerName;
-            this.paymentMethod = paymentMethod;
+        public SubmitResult(boolean success,
+                            String orderId,
+                            String customerId,
+                            String customerName,
+                            String paymentMethod,
+                            String paymentId,
+                            String amountFormatted) {
+            this.success         = success;
+            this.orderId         = orderId;
+            this.customerId      = customerId;
+            this.customerName    = customerName;
+            this.paymentMethod   = paymentMethod;
+            this.paymentId       = paymentId;
+            this.amountFormatted = amountFormatted;
         }
     }
 
@@ -157,17 +173,11 @@ public class menu_util {
         return false;
     }
 
-    public void clearOrder() {
-        orderItems.clear();
-    }
+    public void clearOrder() { orderItems.clear(); }
 
-    public List<String[]> getOrderItems() {
-        return new ArrayList<>(orderItems);
-    }
+    public List<String[]> getOrderItems() { return new ArrayList<>(orderItems); }
 
-    public boolean isEmpty() {
-        return orderItems.isEmpty();
-    }
+    public boolean isEmpty() { return orderItems.isEmpty(); }
 
     // ── Price calculations ────────────────────────────────
 
@@ -175,9 +185,7 @@ public class menu_util {
         if (priceStr == null || priceStr.isBlank()) return 0;
         try {
             return Double.parseDouble(priceStr.replace("₱", "").trim());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
+        } catch (NumberFormatException e) { return 0; }
     }
 
     public double getSubtotal() {
@@ -190,28 +198,52 @@ public class menu_util {
     public double getTax()   { return getSubtotal() * 0.12; }
     public double getTotal() { return getSubtotal() + getTax(); }
 
-    public double getChange(double amountPaid) {
-        return amountPaid - getTotal();
-    }
+    public double getChange(double amountPaid) { return amountPaid - getTotal(); }
 
-    // ── Database persistence ──────────────────────────────
+    // ══════════════════════════════════════════════════════
+    //  DATABASE PERSISTENCE
+    // ══════════════════════════════════════════════════════
 
+    /**
+     * Persists the transaction in three steps:
+     *   1. Upsert customer  → dbo.Customers
+     *   2. Insert order     → dbo.Orders
+     *   3. Insert payment   → dbo.Payments
+     *
+     * amountFormatted in the result is a plain comma-formatted
+     * number string (e.g. "1,234.00") — no peso symbol — so it
+     * renders cleanly in JavaFX labels.
+     */
     public SubmitResult submitOrder(String customerName, String paymentMethod) {
-        SubmitResult failed = new SubmitResult(false, null, null, customerName, paymentMethod);
+        SubmitResult failed = new SubmitResult(
+            false, null, null, customerName, paymentMethod, null, null
+        );
 
         if (orderItems.isEmpty() || conn == null) return failed;
         if (customerName == null || customerName.isBlank()) return failed;
         try { if (conn.isClosed()) return failed; } catch (Exception e) { return failed; }
 
         try {
+            // 1. Customer
             String customerId = findCustomerId(customerName);
             if (customerId == null) customerId = insertCustomer(customerName);
             if (customerId == null) return failed;
 
-            String orderId = insertOrder(customerId, paymentMethod);
+            // 2. Order
+            double total   = getTotal();
+            String orderId = insertOrder(customerId, paymentMethod, total);
             if (orderId == null) return failed;
 
-            return new SubmitResult(true, orderId, customerId, customerName, paymentMethod);
+            // 3. Payment — non-fatal if it fails
+            String paymentId       = insertPayment(orderId, paymentMethod, total);
+            // Plain number format — matches fetchPayments("%,.2f") — no ₱ symbol
+            String amountFormatted = String.format("%,.2f", total);
+
+            return new SubmitResult(
+                true, orderId, customerId, customerName,
+                paymentMethod, paymentId, amountFormatted
+            );
+
         } catch (Exception e) {
             e.printStackTrace();
             return failed;
@@ -221,22 +253,27 @@ public class menu_util {
     // ── Private DB helpers ────────────────────────────────
 
     private String findCustomerId(String name) {
-        String sql = "SELECT customer_id FROM dbo.Customers WHERE customer_name = ? AND is_deleted = 0";
+        String sql =
+            "SELECT customer_id FROM dbo.Customers " +
+            "WHERE customer_name = ? AND is_deleted = 0";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, name);
             ResultSet rs = ps.executeQuery();
-            if (rs.next()) { String id = rs.getString("customer_id"); rs.close(); return id; }
+            if (rs.next()) {
+                String id = rs.getString("customer_id");
+                rs.close();
+                return id;
+            }
             rs.close();
         } catch (Exception e) { e.printStackTrace(); }
         return null;
     }
 
     private String insertCustomer(String name) {
-        // CUST-XXXXX = exactly 10 characters — fits VARCHAR(10)
-        // If your column is still truncating, run:
-        //   ALTER TABLE dbo.Customers ALTER COLUMN customer_id VARCHAR(20) NOT NULL;
         String id  = "CUST-" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
-        String sql = "INSERT INTO dbo.Customers (customer_id, customer_name, status, is_deleted) VALUES (?,?,?,?)";
+        String sql =
+            "INSERT INTO dbo.Customers " +
+            "(customer_id, customer_name, status, is_deleted) VALUES (?,?,?,?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, id);
             ps.setString(2, name);
@@ -247,23 +284,48 @@ public class menu_util {
         } catch (Exception e) { e.printStackTrace(); return null; }
     }
 
-    private String insertOrder(String customerId, String paymentMethod) {
-    String id  = "ORD-" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
-    String pay = (paymentMethod != null && !paymentMethod.isBlank()) ? paymentMethod : "Cash";
-    String sql =
-        "INSERT INTO dbo.Orders " +
-        "(order_id, customer_id, order_status, payment_type, total_amount, status, is_deleted, order_date) " +
-        "VALUES (?,?,?,?,?,?,?,GETDATE())";
-    try (PreparedStatement ps = conn.prepareStatement(sql)) {
-        ps.setString(1, id);
-        ps.setString(2, customerId);
-        ps.setString(3, "Pending");
-        ps.setString(4, pay);
-        ps.setDouble(5, getTotal());   // ← total_amount: subtotal + 12% tax
-        ps.setString(6, "active");
-        ps.setInt(7, 0);
-        ps.executeUpdate();
-        return id;
-    } catch (Exception e) { e.printStackTrace(); return null; }
-}
+    private String insertOrder(String customerId, String paymentMethod, double total) {
+        String id  = "ORD-" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
+        String pay = (paymentMethod != null && !paymentMethod.isBlank()) ? paymentMethod : "Cash";
+        String sql =
+            "INSERT INTO dbo.Orders " +
+            "(order_id, customer_id, order_status, payment_type, " +
+            " total_amount, status, is_deleted, order_date) " +
+            "VALUES (?,?,?,?,?,?,?,GETDATE())";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setString(2, customerId);
+            ps.setString(3, "Pending");
+            ps.setString(4, pay);
+            ps.setDouble(5, total);
+            ps.setString(6, "active");
+            ps.setInt(7, 0);
+            ps.executeUpdate();
+            return id;
+        } catch (Exception e) { e.printStackTrace(); return null; }
+    }
+
+    /**
+     * Inserts one row into dbo.Payments for the order just created.
+     * Returns the generated payment_id, or null if the insert failed.
+     */
+    private String insertPayment(String orderId, String paymentMethod, double amount) {
+        String id  = "PAY-" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
+        String pay = (paymentMethod != null && !paymentMethod.isBlank()) ? paymentMethod : "Cash";
+        String sql =
+            "INSERT INTO dbo.Payments " +
+            "(payment_id, order_id, payment_method, amount, " +
+            " payment_date, is_deleted, status) " +
+            "VALUES (?,?,?,?,GETDATE(),?,?)";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, id);
+            ps.setString(2, orderId);
+            ps.setString(3, pay);
+            ps.setDouble(4, amount);
+            ps.setInt(5, 0);
+            ps.setString(6, "active");
+            ps.executeUpdate();
+            return id;
+        } catch (Exception e) { e.printStackTrace(); return null; }
+    }
 }

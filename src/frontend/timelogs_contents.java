@@ -5,6 +5,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
@@ -75,19 +76,38 @@ public class timelogs_contents {
 
     private String         currentTab  = "active";
     private boolean        archiveMode = false;
+    private String         searchQuery = "";
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label archiveBtn;
-    private Label archiveAllBtn;
-    private Label confirmBtn;
-    private Label activeTabBtn;
-    private Label archivedTabBtn;
-    private Label deleteBtn;
-    private Label exportCsvBtn;
+    private Label     archiveBtn;
+    private Label     archiveAllBtn;
+    private Label     confirmBtn;
+    private Label     activeTabBtn;
+    private Label     archivedTabBtn;
+    private Label     deleteBtn;
+    private Label     exportCsvBtn;
+    private TextField searchField;
+    private HBox      searchBar;
+
+    // ── Layout values computed once in getView() ─────────
+    private double btnY;
+    private double iconW;
+    private double gap;
+    private double tabW;
+    private double archAllW;
+    private double confirmW;
+    private double csvW;
+    private double searchW;
+    private double deleteX;
+    private double exportCsvX;
+    private double archivedTabX;
+    private double activeTabX;
+    private double confirmX;
+    private double archAllX;
 
     private static boolean fontsLoaded = false;
 
@@ -113,11 +133,6 @@ public class timelogs_contents {
     // ══════════════════════════════════════════════════════
     //  PUBLIC LIVE-UPDATE API
     // ══════════════════════════════════════════════════════
-
-    /**
-     * Prepends a new time log row to the active view.
-     * Call this after an employee successfully times in.
-     */
     public void prependLog(String logId, String employeeId, String employeeName,
                             String timeIn, String timeOut) {
         String[] newRow = new String[]{
@@ -133,16 +148,25 @@ public class timelogs_contents {
         }
     }
 
+    // ── Filtered rows based on searchQuery ───────────────
+    private List<String[]> getFilteredRows() {
+        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
+        String q = searchQuery.trim().toLowerCase();
+        List<String[]> filtered = new ArrayList<>();
+        for (String[] row : cachedRows) {
+            if (row[2].toLowerCase().contains(q) || row[1].toLowerCase().contains(q))
+                filtered.add(row);
+        }
+        return filtered;
+    }
+
     // ══════════════════════════════════════════════════════
     //  DB OPERATIONS
     // ══════════════════════════════════════════════════════
-
     private List<String[]> fetchLogs(String tab) {
         List<String[]> rows = new ArrayList<>();
         if (conn == null) return rows;
         try { if (conn.isClosed()) return rows; } catch (Exception e) { return rows; }
-        // Joins to Employees so employee_name is always current, falls back to
-        // the denormalised column if the employee row is somehow missing.
         String sql =
             "SELECT t.log_id, t.employee_id, " +
             "       COALESCE(e.employee_name, t.employee_name) AS employee_name, " +
@@ -158,8 +182,8 @@ public class timelogs_contents {
                 Timestamp timeIn  = rs.getTimestamp("time_in");
                 Timestamp timeOut = rs.getTimestamp("time_out");
                 rows.add(new String[]{
-                    rs.getString("log_id")       != null ? rs.getString("log_id")       : "—",
-                    rs.getString("employee_id")  != null ? rs.getString("employee_id")  : "—",
+                    rs.getString("log_id")        != null ? rs.getString("log_id")        : "—",
+                    rs.getString("employee_id")   != null ? rs.getString("employee_id")   : "—",
                     rs.getString("employee_name") != null ? rs.getString("employee_name") : "—",
                     timeIn  != null ? DISPLAY_FMT.format(timeIn)  : "—",
                     timeOut != null ? DISPLAY_FMT.format(timeOut) : "Still in"
@@ -232,6 +256,23 @@ public class timelogs_contents {
     }
 
     // ══════════════════════════════════════════════════════
+    //  SEARCH BAR REPOSITIONING
+    // ══════════════════════════════════════════════════════
+    /**
+     * Recalculates and sets the search bar X position based on whether
+     * archiveMode is active (Archive All + Confirm buttons visible) or not.
+     *
+     * When archiveMode is OFF  → right edge of search bar = left edge of activeTab - gap
+     * When archiveMode is ON   → right edge of search bar = left edge of archiveAll - gap
+     */
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightAnchor = archiveMode ? archAllX : activeTabX;
+        double newSearchX  = rightAnchor - gap - searchW;
+        searchBar.setLayoutX(newSearchX);
+    }
+
+    // ══════════════════════════════════════════════════════
     //  MAIN VIEW
     // ══════════════════════════════════════════════════════
     public Pane getView() {
@@ -244,8 +285,15 @@ public class timelogs_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH=36, btnY=TOP_PADDING+10, iconW=36, gap=8,
-               tabW=90, archAllW=100, confirmW=90, csvW=120;
+        double btnH = 36;
+        btnY     = TOP_PADDING + 10;
+        iconW    = 36;
+        gap      = 8;
+        tabW     = 90;
+        archAllW = 100;
+        confirmW = 90;
+        csvW     = 120;
+        searchW  = 200;
 
         // ── Title ─────────────────────────────────────────
         Label title = new Label("Time Logs");
@@ -275,13 +323,16 @@ public class timelogs_contents {
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side button layout ──────────────────────
-        double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX      - gap - csvW;
-        double archivedTabX = exportCsvX   - gap - tabW;
-        double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX   - gap - confirmW;
-        double archAllX     = confirmX     - gap - archAllW;
+        // ── Right-side button layout (right → left) ───────
+        deleteX      = totalW - SIDE_PADDING - iconW;
+        exportCsvX   = deleteX      - gap - csvW;
+        archivedTabX = exportCsvX   - gap - tabW;
+        activeTabX   = archivedTabX - gap - tabW;
+        confirmX     = activeTabX   - gap - confirmW;
+        archAllX     = confirmX     - gap - archAllW;
+
+        // Initial search bar position (archiveMode = false)
+        double initialSearchX = activeTabX - gap - searchW;
 
         // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
@@ -298,7 +349,7 @@ public class timelogs_contents {
         deleteBtn.setOnMouseExited(e  -> deleteBtn.setStyle(deleteBtnStyle(false)));
         deleteBtn.setOnMouseClicked(e ->
             stackRoot.getChildren().add(buildConfirmModal(
-                "Time Logs ("+currentTab+")",
+                "Time Logs (" + currentTab + ")",
                 "This will permanently remove all time logs in this view.\nThis action cannot be undone.",
                 () -> { hardDeleteAll(); cachedRows.clear(); selectedIds.clear(); rebuildTable(); }
             ))
@@ -367,7 +418,45 @@ public class timelogs_contents {
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
+            repositionSearchBar();
             cachedRows = fetchLogs(currentTab);
+            rebuildTable();
+        });
+
+        // ── Search bar ────────────────────────────────────
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        searchField = new TextField();
+        searchField.setPromptText("Search name or employee ID...");
+        searchField.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+        searchField.setPrefWidth(searchW - 42);
+
+        searchBar = new HBox(6, searchIcon, searchField);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        searchBar.setPadding(new Insets(0, 10, 0, 12));
+        searchBar.setPrefWidth(searchW);
+        searchBar.setPrefHeight(btnH);
+        searchBar.setLayoutX(initialSearchX);
+        searchBar.setLayoutY(btnY);
+        searchBar.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 20;"
+        );
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            searchQuery = newVal == null ? "" : newVal.trim();
             rebuildTable();
         });
 
@@ -379,8 +468,10 @@ public class timelogs_contents {
         cachedRows  = fetchLogs("active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
-        root.getChildren().addAll(titleRow, archiveAllBtn, confirmBtn,
-            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll);
+        root.getChildren().addAll(
+            titleRow, searchBar, archiveAllBtn, confirmBtn,
+            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
+        );
         stackRoot.getChildren().add(root);
         return stackRoot;
     }
@@ -396,6 +487,7 @@ public class timelogs_contents {
         archiveAllBtn.setVisible(archiveMode);
         confirmBtn.setVisible(archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
+        repositionSearchBar();
         rebuildTable();
     }
 
@@ -412,12 +504,15 @@ public class timelogs_contents {
     private void switchTab(String tab) {
         if (currentTab.equals(tab)) return;
         currentTab = tab; archiveMode = false; selectedIds.clear();
+        searchQuery = "";
+        if (searchField != null) searchField.clear();
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
         archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
+        repositionSearchBar();
         cachedRows = fetchLogs(tab);
         rebuildTable();
     }
@@ -454,12 +549,12 @@ public class timelogs_contents {
         warnIcon.setIconColor(javafx.scene.paint.Color.web("#882F39"));
 
         Label heading = new Label("Are you sure you want to delete\nall entries for " + context + "?");
-        heading.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;-fx-font-weight: bold;" +
+        heading.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;-fx-font-weight: bold;" +
             "-fx-text-fill: #222222;-fx-text-alignment: center;-fx-alignment: center;");
         heading.setAlignment(Pos.CENTER); heading.setWrapText(true); heading.setMaxWidth(MODAL_W - 80);
 
         Label sub = new Label(subMessage);
-        sub.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
+        sub.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;" +
             "-fx-text-fill: #777777;-fx-text-alignment: center;-fx-alignment: center;");
         sub.setAlignment(Pos.CENTER); sub.setWrapText(true); sub.setMaxWidth(MODAL_W - 80);
 
@@ -505,7 +600,7 @@ public class timelogs_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, cachedRows);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -523,13 +618,15 @@ public class timelogs_contents {
     private VBox buildTable(double tableW, List<String[]> rows) {
         double dataW = archiveMode ? tableW - CHECKBOX_COL : tableW;
         VBox table = new VBox(0);
-        table.setStyle("-fx-border-color: "+TABLE_BORDER+";-fx-border-width: 1.5;" +
+        table.setStyle("-fx-border-color: " + TABLE_BORDER + ";-fx-border-width: 1.5;" +
             "-fx-border-radius: 10;-fx-background-color: white;-fx-background-radius: 10;" +
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);");
         table.getChildren().add(buildHeaderRow(tableW, dataW));
         if (rows.isEmpty()) {
-            Label empty = new Label(currentTab.equals("archived") ? "No archived time logs." : "No time logs found.");
-            empty.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
+            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
+                       : currentTab.equals("archived") ? "No archived time logs." : "No time logs found.";
+            Label empty = new Label(msg);
+            empty.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
                 "-fx-text-fill: #AAAAAA;-fx-padding: 24 0 24 16;");
             table.getChildren().add(empty);
         } else {
@@ -547,8 +644,8 @@ public class timelogs_contents {
     private HBox buildHeaderRow(double tableW, double dataW) {
         HBox row = new HBox(0);
         row.setPrefHeight(HEADER_ROW_H);
-        row.setStyle("-fx-background-color: "+HEADER_BG+";-fx-background-radius: 10 10 0 0;" +
-            "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;-fx-border-width: 0 0 1.5 0;");
+        row.setStyle("-fx-background-color: " + HEADER_BG + ";-fx-background-radius: 10 10 0 0;" +
+            "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;-fx-border-width: 0 0 1.5 0;");
         row.setAlignment(Pos.CENTER_LEFT);
         row.getChildren().addAll(
             buildHeaderCell("Log ID",        dataW * COL_LOG_ID),      buildColDivider(),
@@ -571,8 +668,8 @@ public class timelogs_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(HEADER_ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
-            "-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";");
+        lbl.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";");
         return lbl;
     }
 
@@ -614,9 +711,9 @@ public class timelogs_contents {
     //  HELPERS
     // ══════════════════════════════════════════════════════
     private String rowStyle(String bg, String bottomRadius, String borderBottom) {
-        return "-fx-background-color: "+bg+";-fx-background-radius: "+bottomRadius+";" +
-               "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;" +
-               "-fx-border-width: 0 0 "+borderBottom+" 0;";
+        return "-fx-background-color: " + bg + ";-fx-background-radius: " + bottomRadius + ";" +
+               "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
+               "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
     private Label buildTextCell(String text, double width, boolean bold) {
@@ -624,15 +721,15 @@ public class timelogs_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;" +
-            "-fx-font-weight: "+(bold?"bold":"normal")+";-fx-text-fill: #333333;");
+        lbl.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";-fx-text-fill: #333333;");
         return lbl;
     }
 
     private Region buildColDivider() {
         Region div = new Region();
         div.setPrefWidth(1.5); div.setMinWidth(1.5); div.setMaxWidth(1.5);
-        div.setStyle("-fx-background-color: "+TABLE_BORDER+"; -fx-opacity: 0.35;");
+        div.setStyle("-fx-background-color: " + TABLE_BORDER + "; -fx-opacity: 0.35;");
         VBox.setVgrow(div, Priority.ALWAYS);
         return div;
     }
@@ -642,53 +739,53 @@ public class timelogs_contents {
     // ══════════════════════════════════════════════════════
     private String tabBtnStyle(boolean selected) {
         return selected
-            ? "-fx-background-color: "+ACCENT+";-fx-background-radius: 8;-fx-font-family: '"+FONT_FAMILY+"';" +
+            ? "-fx-background-color: " + ACCENT + ";-fx-background-radius: 8;-fx-font-family: '" + FONT_FAMILY + "';" +
               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;"
-            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-              "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;-fx-border-color: " + ACCENT + ";" +
+              "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '" + FONT_FAMILY + "';" +
+              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String tabBtnHoverStyle() {
-        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;-fx-border-color: " + ACCENT + ";" +
+               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String archiveBtnStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#D4EDDA":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+        return "-fx-background-color: " + (active ? "#D4EDDA" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + (active ? "#155724" : ACCENT) + ";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String archiveAllBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#EDD5D8":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+ACCENT+";-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: " + (hovered ? "#EDD5D8" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + ACCENT + ";-fx-border-radius: 8;-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String confirmBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: white;-fx-cursor: hand;";
     }
     private String deleteBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#F8D7DA":"#FDF0F1")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#F8D7DA" : "#FDF0F1") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #721C24;-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String exportCsvBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#C3E6CB":"#D4EDDA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #155724;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: #155724;-fx-cursor: hand;";
     }
     private String modalNoBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#E9ECEF":"#F8F9FA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#E9ECEF" : "#F8F9FA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #CCCCCC;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: #555555;-fx-cursor: hand;";
     }
     private String modalYesBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: white;-fx-cursor: hand;";
     }
 }

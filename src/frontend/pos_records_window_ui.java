@@ -77,7 +77,9 @@ public class pos_records_window_ui {
     private customers_contents customersContents;
     private payments_contents  paymentsContents;
     private timelogs_contents  timelogsContents;
-    private employees_contents employeesContents;  // ← NEW
+    private employees_contents employeesContents;
+    private inventory_contents inventoryContents;
+    private suppliers_contents suppliersContents;   // ← NEW
 
     // Live-updating labels in Card 3
     private Label     hoursWorkedValue;
@@ -134,7 +136,9 @@ public class pos_records_window_ui {
         customersContents = new customers_contents(contentW, CONTENT_H, conn);
         paymentsContents  = new payments_contents(contentW, CONTENT_H, conn);
         timelogsContents  = new timelogs_contents(contentW, CONTENT_H, conn);
-        employeesContents = new employees_contents(contentW, CONTENT_H, conn);  // ← NEW
+        employeesContents = new employees_contents(contentW, CONTENT_H, conn);
+        inventoryContents = new inventory_contents(contentW, CONTENT_H, conn);
+        suppliersContents = new suppliers_contents(contentW, CONTENT_H, conn);  // ← NEW
 
         // ── Cross-view live-update wiring ─────────────────
         menuContents.setOnOrderSubmitted(result -> {
@@ -194,7 +198,7 @@ public class pos_records_window_ui {
         HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",   38, 20, isManager);
         HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",  38, 20, isManager);
         HBox inventoryBtn  = createNavButton("Inventory",  "assets/icons/inventory_icon.png",  38, 20, isManager);
-        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",  38, 20, isManager);
+        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",  38, 20, isManager);  // ← now wired
         HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",  38, 20, isManager);
         HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png", 38, 20, isManager);
 
@@ -261,9 +265,9 @@ public class pos_records_window_ui {
         if (isManager) {
             paymentsBtn.setOnMouseClicked(e   -> showPayments());
             timeLogsBtn.setOnMouseClicked(e   -> showTimeLogs());
-            employeesBtn.setOnMouseClicked(e  -> showEmployees());   // ← wired (was placeholder)
-            inventoryBtn.setOnMouseClicked(e  -> switchContent("Inventory"));
-            suppliersBtn.setOnMouseClicked(e  -> switchContent("Suppliers"));
+            employeesBtn.setOnMouseClicked(e  -> showEmployees());
+            inventoryBtn.setOnMouseClicked(e  -> showInventory());
+            suppliersBtn.setOnMouseClicked(e  -> showSuppliers());   // ← wired
             purchasesBtn.setOnMouseClicked(e  -> switchContent("Purchases"));
             promotionsBtn.setOnMouseClicked(e -> switchContent("Promotions"));
         }
@@ -292,7 +296,6 @@ public class pos_records_window_ui {
         card.setPadding(new Insets(14, 14, 14, 14));
         card.setStyle(cardStyle());
 
-        // ── Header row: avatar icon + name ────────────────
         FontIcon avatarIcon = new FontIcon(FontAwesomeSolid.USER_CIRCLE);
         avatarIcon.setIconSize(22);
         avatarIcon.setIconColor(Color.web(ACCENT));
@@ -324,19 +327,16 @@ public class pos_records_window_ui {
         HBox headerRow = new HBox(8, avatarIcon, nameBox);
         headerRow.setAlignment(Pos.CENTER_LEFT);
 
-        // ── Divider ───────────────────────────────────────
         Region divider = new Region();
         divider.setPrefHeight(1);
         divider.setStyle("-fx-background-color: #F0D8DA;");
 
-        // ── Time-in row ───────────────────────────────────
         Label timeInRow = buildInfoRow(
             FontAwesomeSolid.SIGN_IN_ALT,
             "Time In",
             auth_util.getTimeInFormatted()
         );
 
-        // ── Hours worked row (live) ───────────────────────
         hoursWorkedValue = new Label(auth_util.getHoursWorked());
         hoursWorkedValue.setStyle(valueStyle());
 
@@ -346,11 +346,9 @@ public class pos_records_window_ui {
         HBox hoursRow = new HBox(6, hoursIcon, hoursKey, buildRowSpacer(), hoursWorkedValue);
         hoursRow.setAlignment(Pos.CENTER_LEFT);
 
-        // ── Spacer ────────────────────────────────────────
         Region vSpacer = new Region();
         VBox.setVgrow(vSpacer, Priority.ALWAYS);
 
-        // ── Time-out button ───────────────────────────────
         FontIcon timeOutIcon = new FontIcon(FontAwesomeSolid.SIGN_OUT_ALT);
         timeOutIcon.setIconSize(13);
         timeOutIcon.setIconColor(Color.web("#721C24"));
@@ -367,14 +365,7 @@ public class pos_records_window_ui {
         timeOutBtn.setOnMouseExited(e  -> timeOutBtn.setStyle(timeOutBtnStyle(false)));
         timeOutBtn.setOnMouseClicked(e -> handleTimeOut(stage));
 
-        card.getChildren().addAll(
-            headerRow,
-            divider,
-            timeInRow,
-            hoursRow,
-            vSpacer,
-            timeOutBtn
-        );
+        card.getChildren().addAll(headerRow, divider, timeInRow, hoursRow, vSpacer, timeOutBtn);
         return card;
     }
 
@@ -390,35 +381,27 @@ public class pos_records_window_ui {
         );
         shiftClock.setCycleCount(Animation.INDEFINITE);
         shiftClock.play();
-
         if (hoursWorkedValue != null)
             hoursWorkedValue.setText(auth_util.getHoursWorked());
     }
 
     // ══════════════════════════════════════════════════════
-    //  TIME-OUT HANDLER — shows confirmation modal
+    //  TIME-OUT HANDLER
     // ══════════════════════════════════════════════════════
-    private void handleTimeOut(Stage stage) {
-        // Snapshot the worked duration before the modal is shown
+    private void handleTimeOut(Stage posStage) {
         String hoursWorked = auth_util.getHoursWorked();
 
-        // ── Dim overlay covering the whole screen ─────────
         Pane overlay = new Pane();
-        overlay.setPrefWidth(rootPane.getPrefWidth() > 0 ? rootPane.getPrefWidth() : stage.getWidth());
-        overlay.setPrefHeight(rootPane.getPrefHeight() > 0 ? rootPane.getPrefHeight() : stage.getHeight());
+        overlay.setPrefWidth(rootPane.getPrefWidth() > 0 ? rootPane.getPrefWidth() : posStage.getWidth());
+        overlay.setPrefHeight(rootPane.getPrefHeight() > 0 ? rootPane.getPrefHeight() : posStage.getHeight());
         overlay.setMinWidth(overlay.getPrefWidth());
         overlay.setMinHeight(overlay.getPrefHeight());
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.52);");
 
-        // ── Card ──────────────────────────────────────────
         VBox card = new VBox(18);
         card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(MODAL_W);
-        card.setMinWidth(MODAL_W);
-        card.setMaxWidth(MODAL_W);
-        card.setPrefHeight(MODAL_H);
-        card.setMinHeight(MODAL_H);
-        card.setMaxHeight(MODAL_H);
+        card.setPrefWidth(MODAL_W); card.setMinWidth(MODAL_W); card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H); card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
         card.setStyle(
             "-fx-background-color: white;" +
@@ -426,12 +409,10 @@ public class pos_records_window_ui {
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
         );
 
-        // ── Warning icon ──────────────────────────────────
         FontIcon warnIcon = new FontIcon(FontAwesomeSolid.SIGN_OUT_ALT);
         warnIcon.setIconSize(28);
         warnIcon.setIconColor(Color.web("#882F39"));
 
-        // ── Heading ───────────────────────────────────────
         Label heading = new Label("Are you sure you want to end your shift?");
         heading.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -445,7 +426,6 @@ public class pos_records_window_ui {
         heading.setWrapText(true);
         heading.setMaxWidth(MODAL_W - 80);
 
-        // ── Sub-message with hours worked ─────────────────
         Label sub = new Label("You've worked " + hoursWorked + " today.");
         sub.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -458,11 +438,9 @@ public class pos_records_window_ui {
         sub.setWrapText(true);
         sub.setMaxWidth(MODAL_W - 80);
 
-        // ── Buttons ───────────────────────────────────────
         Label noBtn = new Label("No, go back");
         noBtn.setCursor(Cursor.HAND);
-        noBtn.setPrefWidth(140);
-        noBtn.setPrefHeight(38);
+        noBtn.setPrefWidth(140); noBtn.setPrefHeight(38);
         noBtn.setAlignment(Pos.CENTER);
         noBtn.setStyle(modalNoBtnStyle(false));
         noBtn.setOnMouseEntered(e -> noBtn.setStyle(modalNoBtnStyle(true)));
@@ -471,35 +449,32 @@ public class pos_records_window_ui {
 
         Label yesBtn = new Label("Yes, end shift");
         yesBtn.setCursor(Cursor.HAND);
-        yesBtn.setPrefWidth(140);
-        yesBtn.setPrefHeight(38);
+        yesBtn.setPrefWidth(140); yesBtn.setPrefHeight(38);
         yesBtn.setAlignment(Pos.CENTER);
         yesBtn.setStyle(modalYesBtnStyle(false));
         yesBtn.setOnMouseEntered(e -> yesBtn.setStyle(modalYesBtnStyle(true)));
         yesBtn.setOnMouseExited(e  -> yesBtn.setStyle(modalYesBtnStyle(false)));
         yesBtn.setOnMouseClicked(e -> {
-            // Stop clock
             if (shiftClock != null) shiftClock.stop();
-
-            // Log to console (replace with DB insert)
             System.out.println("[TIME-OUT] User     : " + auth_util.getCurrentName());
             System.out.println("[TIME-OUT] Shift In : " + auth_util.getShiftStartFullFormatted());
             System.out.println("[TIME-OUT] Duration : " + hoursWorked);
-
-            // TODO: insert into time_logs DB table here before logout
-            auth_util.logout();
-
-            // Exit the application
-            stage.close();
-            javafx.application.Platform.exit();
+            if (auth_util.isEmployee()) {
+                boolean stamped = auth_util.timeOut();
+                if (!stamped) {
+                    System.err.println("[TIME-OUT] WARNING: DB stamp failed.");
+                }
+            } else {
+                auth_util.logout();
+            }
+            posStage.close();
+            openAuthWindow();
         });
 
         HBox btnRow = new HBox(16, noBtn, yesBtn);
         btnRow.setAlignment(Pos.CENTER);
-
         card.getChildren().addAll(warnIcon, heading, sub, btnRow);
 
-        // ── Centre the card in the overlay ────────────────
         StackPane centred = new StackPane(card);
         centred.setPrefWidth(overlay.getPrefWidth());
         centred.setPrefHeight(overlay.getPrefHeight());
@@ -507,8 +482,16 @@ public class pos_records_window_ui {
         centred.setMinHeight(overlay.getPrefHeight());
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);
-
         rootPane.getChildren().add(overlay);
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  NAVIGATION — back to auth
+    // ══════════════════════════════════════════════════════
+    private void openAuthWindow() {
+        Stage authStage = new Stage();
+        auth_ui authUI  = new auth_ui(conn);
+        authUI.start(authStage);
     }
 
     // ══════════════════════════════════════════════════════
@@ -535,7 +518,15 @@ public class pos_records_window_ui {
     }
 
     private void showEmployees() {
-        contentPane.getChildren().setAll(employeesContents.getView());  // ← NEW
+        contentPane.getChildren().setAll(employeesContents.getView());
+    }
+
+    private void showInventory() {
+        contentPane.getChildren().setAll(inventoryContents.getView());
+    }
+
+    private void showSuppliers() {
+        contentPane.getChildren().setAll(suppliersContents.getView());  // ← NEW
     }
 
     private void switchContent(String tab) {
@@ -574,7 +565,6 @@ public class pos_records_window_ui {
                 "-fx-font-weight: bold;" +
                 "-fx-text-fill: " + ACCENT + ";"
             );
-
             HBox row = new HBox(12, icon, text);
             row.setAlignment(Pos.CENTER_LEFT);
             row.setPadding(new Insets(6, 6, 6, 30));
@@ -586,7 +576,6 @@ public class pos_records_window_ui {
             row.setOnMouseExited(e -> row.setStyle(
                 "-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;"));
             return row;
-
         } else {
             icon.setOpacity(0.25);
             text.setStyle(
@@ -595,21 +584,17 @@ public class pos_records_window_ui {
                 "-fx-font-weight: bold;" +
                 "-fx-text-fill: #C0C0C0;"
             );
-
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
-
             FontIcon lockIcon = new FontIcon(FontAwesomeSolid.LOCK);
             lockIcon.setIconSize(13);
             lockIcon.setIconColor(Color.web("#C8A0A4"));
-
             HBox row = new HBox(12, icon, text, spacer, lockIcon);
             row.setAlignment(Pos.CENTER_LEFT);
             row.setPadding(new Insets(6, 12, 6, 30));
             row.setPrefWidth(CARD_W - 12);
             row.setStyle("-fx-background-color: #FAF3F4; -fx-background-radius: 10;");
             row.setCursor(Cursor.DEFAULT);
-
             Tooltip tip = new Tooltip("For managers only");
             tip.setShowDelay(Duration.millis(200));
             tip.setStyle(
@@ -633,10 +618,8 @@ public class pos_records_window_ui {
         Label keyLbl   = buildKeyLabel(key);
         Label valueLbl = new Label(value);
         valueLbl.setStyle(valueStyle());
-
         HBox row = new HBox(6, iconLbl, keyLbl, buildRowSpacer(), valueLbl);
         row.setAlignment(Pos.CENTER_LEFT);
-
         Label wrapper = new Label();
         wrapper.setGraphic(row);
         wrapper.setPadding(Insets.EMPTY);

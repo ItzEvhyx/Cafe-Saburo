@@ -39,7 +39,6 @@ public class employees_contents {
     private static final double SIDE_PADDING = 24;
     private static final double HEADER_H     = 56;
 
-    // Columns: ID | Name | Age | Role | Status
     private static final double COL_EMPLOYEE_ID = 0.18;
     private static final double COL_EMP_NAME    = 0.27;
     private static final double COL_AGE         = 0.10;
@@ -50,10 +49,8 @@ public class employees_contents {
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
 
-    // ── Fixed modal dimensions (same pattern as orders_contents) ──
-    private static final double MODAL_W      = 460;
     private static final double ADD_MODAL_W  = 460;
-    private static final double ADD_MODAL_H  = 420;
+    private static final double ADD_MODAL_H  = 460;
     private static final double CONF_MODAL_W = 460;
     private static final double CONF_MODAL_H = 260;
 
@@ -86,21 +83,40 @@ public class employees_contents {
     private String         currentTab  = "active";
     private boolean        editMode    = false;
     private boolean        archiveMode = false;
+    private String         searchQuery = "";
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
-    private List<String[]> cachedRows  = new ArrayList<>(); // [id, name, age, role, status]
+    private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label editBtn;
-    private Label addBtn;
-    private Label archiveBtn;
-    private Label archiveAllBtn;
-    private Label confirmBtn;
-    private Label activeTabBtn;
-    private Label archivedTabBtn;
-    private Label deleteBtn;
-    private Label exportCsvBtn;
+    private Label     editBtn;
+    private Label     addBtn;
+    private Label     archiveBtn;
+    private Label     archiveAllBtn;
+    private Label     confirmBtn;
+    private Label     activeTabBtn;
+    private Label     archivedTabBtn;
+    private Label     deleteBtn;
+    private Label     exportCsvBtn;
+    private TextField searchField;
+    private HBox      searchBar;
+
+    // ── Layout values computed once in getView() ─────────
+    private double btnY;
+    private double iconW;
+    private double gap;
+    private double tabW;
+    private double archAllW;
+    private double confirmW;
+    private double csvW;
+    private double searchW;
+    private double deleteX;
+    private double exportCsvX;
+    private double archivedTabX;
+    private double activeTabX;
+    private double confirmX;
+    private double archAllX;
 
     private static boolean fontsLoaded = false;
 
@@ -139,6 +155,18 @@ public class employees_contents {
             cachedRows.add(0, newRow);
             rebuildTable();
         }
+    }
+
+    // ── Filtered rows based on searchQuery ───────────────
+    private List<String[]> getFilteredRows() {
+        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
+        String q = searchQuery.trim().toLowerCase();
+        List<String[]> filtered = new ArrayList<>();
+        for (String[] row : cachedRows) {
+            if (row[1].toLowerCase().contains(q) || row[0].toLowerCase().contains(q))
+                filtered.add(row);
+        }
+        return filtered;
     }
 
     // ══════════════════════════════════════════════════════
@@ -289,6 +317,16 @@ public class employees_contents {
     private String nvl(String v) { return v != null ? v : "—"; }
 
     // ══════════════════════════════════════════════════════
+    //  SEARCH BAR REPOSITIONING
+    // ══════════════════════════════════════════════════════
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightAnchor = archiveMode ? archAllX : activeTabX;
+        double newSearchX  = rightAnchor - gap - searchW;
+        searchBar.setLayoutX(newSearchX);
+    }
+
+    // ══════════════════════════════════════════════════════
     //  MAIN VIEW
     // ══════════════════════════════════════════════════════
     public Pane getView() {
@@ -301,19 +339,28 @@ public class employees_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH = 36, btnY = TOP_PADDING + 10, iconW = 36, gap = 8,
-               tabW = 90, archAllW = 100, confirmW = 90, csvW = 120;
+        double btnH    = 36;
+        btnY           = TOP_PADDING + 10;
+        iconW          = 36;
+        gap            = 8;
+        tabW           = 90;
+        archAllW       = 100;
+        confirmW       = 90;
+        csvW           = 120;
+        // ── Width for the labeled Add Employee button ─────
+        double addEmpW = 140;
+        searchW        = 200;
 
         // ── Title ─────────────────────────────────────────
         Label title = new Label("Employees");
         title.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 36px;" +
             "-fx-font-weight: 800;" +
-            "-fx-text-fill: "+ACCENT+";"
+            "-fx-text-fill: " + ACCENT + ";"
         );
 
-        // ── Edit (pen) button ─────────────────────────────
+        // ── Edit (pen) button — icon-only, unchanged ──────
         FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
         penIcon.setIconSize(15);
         penIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -337,21 +384,23 @@ public class employees_contents {
             rebuildTable();
         });
 
-        // ── Add Employee (+) button ───────────────────────
+        // ── Add Employee button — labeled green, mirrors addSupplierBtn ──
         FontIcon plusIcon = new FontIcon(FontAwesomeSolid.USER_PLUS);
-        plusIcon.setIconSize(15);
-        plusIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-        addBtn = new Label();
+        plusIcon.setIconSize(14);
+        plusIcon.setIconColor(javafx.scene.paint.Color.web("#155724"));
+        addBtn = new Label("Add Employee");
         addBtn.setGraphic(plusIcon);
+        addBtn.setGraphicTextGap(6);
         addBtn.setCursor(javafx.scene.Cursor.HAND);
-        addBtn.setStyle(iconBtnStyle(false, ACCENT, "#F5E8EA"));
-        addBtn.setPrefHeight(btnH); addBtn.setPrefWidth(iconW);
+        addBtn.setStyle(addEmpBtnStyle(false));
+        addBtn.setPrefHeight(btnH);
+        addBtn.setPrefWidth(addEmpW);
         addBtn.setAlignment(Pos.CENTER);
-        addBtn.setOnMouseEntered(e -> addBtn.setStyle(iconBtnStyle(false, ACCENT, "#EDD5D8")));
-        addBtn.setOnMouseExited(e  -> addBtn.setStyle(iconBtnStyle(false, ACCENT, "#F5E8EA")));
+        addBtn.setOnMouseEntered(e -> addBtn.setStyle(addEmpBtnStyle(true)));
+        addBtn.setOnMouseExited(e  -> addBtn.setStyle(addEmpBtnStyle(false)));
         addBtn.setOnMouseClicked(e -> stackRoot.getChildren().add(buildAddEmployeeModal()));
 
-        // ── Archive button ────────────────────────────────
+        // ── Archive button — icon-only, unchanged ─────────
         FontIcon boxIcon = new FontIcon(FontAwesomeSolid.ARCHIVE);
         boxIcon.setIconSize(15);
         boxIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -371,13 +420,15 @@ public class employees_contents {
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side layout ─────────────────────────────
-        double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX      - gap - csvW;
-        double archivedTabX = exportCsvX   - gap - tabW;
-        double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX   - gap - confirmW;
-        double archAllX     = confirmX     - gap - archAllW;
+        // ── Right-side button layout (right → left) ───────
+        deleteX      = totalW - SIDE_PADDING - iconW;
+        exportCsvX   = deleteX      - gap - csvW;
+        archivedTabX = exportCsvX   - gap - tabW;
+        activeTabX   = archivedTabX - gap - tabW;
+        confirmX     = activeTabX   - gap - confirmW;
+        archAllX     = confirmX     - gap - archAllW;
+
+        double initialSearchX = activeTabX - gap - searchW;
 
         // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
@@ -463,7 +514,45 @@ public class employees_contents {
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(iconBtnStyle(false, ACCENT, "#F5E8EA"));
+            repositionSearchBar();
             cachedRows = fetchEmployees(currentTab);
+            rebuildTable();
+        });
+
+        // ── Search bar ────────────────────────────────────
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        searchField = new TextField();
+        searchField.setPromptText("Search name or employee ID...");
+        searchField.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+        searchField.setPrefWidth(searchW - 42);
+
+        searchBar = new HBox(6, searchIcon, searchField);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        searchBar.setPadding(new Insets(0, 10, 0, 12));
+        searchBar.setPrefWidth(searchW);
+        searchBar.setPrefHeight(btnH);
+        searchBar.setLayoutX(initialSearchX);
+        searchBar.setLayoutY(btnY);
+        searchBar.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 20;"
+        );
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            searchQuery = newVal == null ? "" : newVal.trim();
             rebuildTable();
         });
 
@@ -475,14 +564,16 @@ public class employees_contents {
         cachedRows  = fetchEmployees("active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
-        root.getChildren().addAll(titleRow, archiveAllBtn, confirmBtn,
-            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll);
+        root.getChildren().addAll(
+            titleRow, searchBar, archiveAllBtn, confirmBtn,
+            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
+        );
         stackRoot.getChildren().add(root);
         return stackRoot;
     }
 
     // ══════════════════════════════════════════════════════
-    //  ADD EMPLOYEE MODAL  — fixed size
+    //  ADD EMPLOYEE MODAL
     // ══════════════════════════════════════════════════════
     private Pane buildAddEmployeeModal() {
         Pane overlay = new Pane();
@@ -491,108 +582,171 @@ public class employees_contents {
         overlay.setMaxWidth(totalW);   overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
-        VBox card = new VBox(16);
+        VBox card = new VBox(0);
         card.setAlignment(Pos.TOP_LEFT);
-        // ── Fixed dimensions ──────────────────────────────
         card.setPrefWidth(ADD_MODAL_W);  card.setMinWidth(ADD_MODAL_W);  card.setMaxWidth(ADD_MODAL_W);
         card.setPrefHeight(ADD_MODAL_H); card.setMinHeight(ADD_MODAL_H); card.setMaxHeight(ADD_MODAL_H);
-        card.setPadding(new Insets(36, 40, 32, 40));
         card.setStyle(
             "-fx-background-color: white;" +
             "-fx-background-radius: 14;" +
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
         );
 
-        // ── Heading ───────────────────────────────────────
-        Label heading = new Label("Add New Employee");
-        heading.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
-            "-fx-font-size: 18px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: "+ACCENT+";"
+        // ── Colored modal header ──────────────────────────
+        HBox cardHeader = new HBox(10);
+        cardHeader.setPadding(new Insets(20, 24, 16, 24));
+        cardHeader.setAlignment(Pos.CENTER_LEFT);
+        cardHeader.setStyle(
+            "-fx-background-color: " + HEADER_BG + ";" +
+            "-fx-background-radius: 14 14 0 0;" +
+            "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
+            "-fx-border-width: 0 0 1.5 0;"
         );
 
-        // ── Name field ────────────────────────────────────
-        Label nameLabel = fieldLabel("Full Name");
-        TextField nameField = modalTextField("e.g. Juan Dela Cruz");
+        FontIcon userIcon = new FontIcon(FontAwesomeSolid.USER_PLUS);
+        userIcon.setIconSize(17);
+        userIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
 
-        // ── Age field ─────────────────────────────────────
-        Label ageLabel = fieldLabel("Age");
-        TextField ageField = modalTextField("e.g. 24");
-        ageField.textProperty().addListener((obs, oldVal, newVal) -> {
-            if (!newVal.matches("\\d*")) ageField.setText(newVal.replaceAll("[^\\d]", ""));
-            if (newVal.length() > 3)    ageField.setText(oldVal);
+        Label modalTitle = new Label("Add New Employee");
+        modalTitle.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 20px;" +
+            "-fx-font-weight: 800;" +
+            "-fx-text-fill: " + ACCENT + ";"
+        );
+
+        Region hSpacer = new Region();
+        HBox.setHgrow(hSpacer, Priority.ALWAYS);
+
+        Label closeBtn = new Label();
+        FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
+        xIcon.setIconSize(13);
+        xIcon.setIconColor(javafx.scene.paint.Color.web("#555555"));
+        closeBtn.setGraphic(xIcon);
+        closeBtn.setCursor(javafx.scene.Cursor.HAND);
+        closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
+        closeBtn.setAlignment(Pos.CENTER);
+        closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;");
+        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6; -fx-background-radius: 6;"));
+        closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;"));
+        closeBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
+
+        cardHeader.getChildren().addAll(userIcon, modalTitle, hSpacer, closeBtn);
+
+        // ── Form body ─────────────────────────────────────
+        VBox formBody = new VBox(18);
+        formBody.setPadding(new Insets(26, 28, 10, 28));
+        VBox.setVgrow(formBody, Priority.ALWAYS);
+
+        VBox nameFieldBox = buildFormField(FontAwesomeSolid.USER, "Full Name", "e.g. Juan Dela Cruz");
+        TextField nameInput = extractTextField(nameFieldBox);
+
+        VBox ageFieldBox = buildFormField(FontAwesomeSolid.BIRTHDAY_CAKE, "Age", "e.g. 24");
+        TextField ageInput = extractTextField(ageFieldBox);
+        ageInput.textProperty().addListener((obs, oldVal, newVal) -> {
+            if (!newVal.matches("\\d*")) ageInput.setText(newVal.replaceAll("[^\\d]", ""));
+            if (newVal.length() > 3)    ageInput.setText(oldVal);
         });
 
-        // ── Role combo ────────────────────────────────────
-        Label roleLabel = fieldLabel("Role");
+        Label roleLabel = new Label("Role");
+        roleLabel.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 12px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: #555555;"
+        );
+
+        FontIcon roleIcon = new FontIcon(FontAwesomeSolid.ID_BADGE);
+        roleIcon.setIconSize(13);
+        roleIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
         ComboBox<String> roleCombo = new ComboBox<>();
         roleCombo.getItems().addAll("Barista", "Cashier", "Cleaner");
         roleCombo.setValue("Barista");
         roleCombo.setCellFactory(lv -> new javafx.scene.control.ListCell<String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
+            @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setDisable(false); return; }
                 setText(item);
                 boolean disabled = item.equals("Cashier") || item.equals("Cleaner");
                 setDisable(disabled);
                 setStyle(disabled
-                    ? "-fx-text-fill: #AAAAAA; -fx-font-family: '"+FONT_FAMILY+"'; -fx-font-size: 13px;"
-                    : "-fx-font-family: '"+FONT_FAMILY+"'; -fx-font-size: 13px;"
+                    ? "-fx-text-fill: #AAAAAA; -fx-font-family: '" + FONT_FAMILY + "'; -fx-font-size: 13px;"
+                    : "-fx-font-family: '" + FONT_FAMILY + "'; -fx-font-size: 13px;"
                 );
             }
         });
         roleCombo.setButtonCell(new javafx.scene.control.ListCell<String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
+            @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? "" : item);
-                setStyle("-fx-font-family: '"+FONT_FAMILY+"'; -fx-font-size: 13px;");
+                setStyle("-fx-font-family: '" + FONT_FAMILY + "'; -fx-font-size: 13px; -fx-background-color: transparent;");
             }
         });
+        HBox.setHgrow(roleCombo, Priority.ALWAYS);
         roleCombo.setMaxWidth(Double.MAX_VALUE);
-        roleCombo.setPrefHeight(42);
         roleCombo.setStyle(
-            "-fx-background-color: #FAF5F6;" +
-            "-fx-border-color: #C8A0A5;" +
-            "-fx-border-radius: 8;" +
-            "-fx-background-radius: 8;" +
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 13px;"
         );
 
-        // ── Error label ───────────────────────────────────
+        HBox roleInputBox = new HBox(8, roleIcon, roleCombo);
+        roleInputBox.setAlignment(Pos.CENTER_LEFT);
+        roleInputBox.setPadding(new Insets(0, 12, 0, 12));
+        roleInputBox.setPrefHeight(40);
+        roleInputBox.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 10;"
+        );
+
+        VBox roleFieldBox = new VBox(6, roleLabel, roleInputBox);
+
         Label errorLbl = new Label("");
         errorLbl.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 12px;" +
             "-fx-text-fill: #882F39;"
         );
         errorLbl.setVisible(false);
         errorLbl.setWrapText(true);
-        errorLbl.setMaxWidth(ADD_MODAL_W - 80);
+        errorLbl.setMaxWidth(ADD_MODAL_W - 56);
 
-        // ── Buttons ───────────────────────────────────────
+        formBody.getChildren().addAll(nameFieldBox, ageFieldBox, roleFieldBox, errorLbl);
+
+        // ── Footer ────────────────────────────────────────
+        HBox footer = new HBox(12);
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.setPadding(new Insets(18, 28, 24, 28));
+
         Label cancelBtn = new Label("Cancel");
         cancelBtn.setCursor(javafx.scene.Cursor.HAND);
-        cancelBtn.setPrefWidth(150); cancelBtn.setPrefHeight(42);
+        cancelBtn.setPrefWidth(140); cancelBtn.setPrefHeight(38);
         cancelBtn.setAlignment(Pos.CENTER);
         cancelBtn.setStyle(modalNoBtnStyle(false));
         cancelBtn.setOnMouseEntered(e -> cancelBtn.setStyle(modalNoBtnStyle(true)));
         cancelBtn.setOnMouseExited(e  -> cancelBtn.setStyle(modalNoBtnStyle(false)));
         cancelBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
 
+        FontIcon saveIcon = new FontIcon(FontAwesomeSolid.USER_PLUS);
+        saveIcon.setIconSize(13);
+        saveIcon.setIconColor(javafx.scene.paint.Color.WHITE);
         Label saveBtn = new Label("Add Employee");
+        saveBtn.setGraphic(saveIcon);
+        saveBtn.setGraphicTextGap(7);
         saveBtn.setCursor(javafx.scene.Cursor.HAND);
-        saveBtn.setPrefWidth(170); saveBtn.setPrefHeight(42);
+        saveBtn.setPrefWidth(160); saveBtn.setPrefHeight(38);
         saveBtn.setAlignment(Pos.CENTER);
         saveBtn.setStyle(confirmBtnStyle(false));
         saveBtn.setOnMouseEntered(e -> saveBtn.setStyle(confirmBtnStyle(true)));
         saveBtn.setOnMouseExited(e  -> saveBtn.setStyle(confirmBtnStyle(false)));
         saveBtn.setOnMouseClicked(e -> {
-            String name    = nameField.getText().trim();
-            String ageText = ageField.getText().trim();
+            String name    = nameInput.getText().trim();
+            String ageText = ageInput.getText().trim();
             String role    = roleCombo.getValue();
 
             if (name.isEmpty()) {
@@ -620,7 +774,6 @@ public class employees_contents {
                 errorLbl.setText("Please select a role.");
                 errorLbl.setVisible(true); return;
             }
-
             errorLbl.setVisible(false);
             boolean ok = insertEmployee(name, age, role);
             if (ok) {
@@ -631,17 +784,8 @@ public class employees_contents {
             }
         });
 
-        HBox btnRow = new HBox(12, cancelBtn, saveBtn);
-        btnRow.setAlignment(Pos.CENTER_RIGHT);
-
-        card.getChildren().addAll(
-            heading,
-            nameLabel, nameField,
-            ageLabel,  ageField,
-            roleLabel, roleCombo,
-            errorLbl,
-            btnRow
-        );
+        footer.getChildren().addAll(cancelBtn, saveBtn);
+        card.getChildren().addAll(cardHeader, formBody, footer);
 
         StackPane centred = new StackPane(card);
         centred.setPrefWidth(totalW);  centred.setPrefHeight(totalH);
@@ -652,33 +796,49 @@ public class employees_contents {
         return overlay;
     }
 
-    private Label fieldLabel(String text) {
-        Label lbl = new Label(text);
-        lbl.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
-            "-fx-font-size: 13px;" +
+    private VBox buildFormField(FontAwesomeSolid iconCode, String label, String prompt) {
+        Label fieldLabel = new Label(label);
+        fieldLabel.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 12px;" +
             "-fx-font-weight: bold;" +
-            "-fx-text-fill: #444444;"
+            "-fx-text-fill: #555555;"
         );
-        VBox.setMargin(lbl, new Insets(4, 0, 0, 0));
-        return lbl;
+
+        FontIcon fi = new FontIcon(iconCode);
+        fi.setIconSize(13);
+        fi.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        TextField input = new TextField();
+        input.setPromptText(prompt);
+        HBox.setHgrow(input, Priority.ALWAYS);
+        input.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+
+        HBox inputBox = new HBox(8, fi, input);
+        inputBox.setAlignment(Pos.CENTER_LEFT);
+        inputBox.setPadding(new Insets(0, 12, 0, 12));
+        inputBox.setPrefHeight(40);
+        inputBox.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 10;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 10;"
+        );
+
+        return new VBox(6, fieldLabel, inputBox);
     }
 
-    private TextField modalTextField(String placeholder) {
-        TextField tf = new TextField();
-        tf.setPromptText(placeholder);
-        tf.setPrefHeight(42);
-        tf.setMaxWidth(Double.MAX_VALUE);
-        tf.setStyle(
-            "-fx-background-color: #FAF5F6;" +
-            "-fx-border-color: #C8A0A5;" +
-            "-fx-border-radius: 8;" +
-            "-fx-background-radius: 8;" +
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
-            "-fx-font-size: 13px;" +
-            "-fx-padding: 0 12 0 12;"
-        );
-        return tf;
+    private TextField extractTextField(VBox fieldBox) {
+        HBox inputBox = (HBox) fieldBox.getChildren().get(1);
+        return (TextField) inputBox.getChildren().get(1);
     }
 
     // ══════════════════════════════════════════════════════
@@ -693,6 +853,7 @@ public class employees_contents {
         confirmBtn.setVisible(archiveMode);
         archiveBtn.setStyle(iconBtnStyle(archiveMode, archiveMode ? "#155724" : ACCENT,
                                          archiveMode ? "#D4EDDA" : "#F5E8EA"));
+        repositionSearchBar();
         rebuildTable();
     }
 
@@ -710,6 +871,8 @@ public class employees_contents {
         if (currentTab.equals(tab)) return;
         currentTab = tab; editMode = false; archiveMode = false;
         selectedIds.clear();
+        searchQuery = "";
+        if (searchField != null) searchField.clear();
         FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
         penIcon.setIconSize(15);
         penIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -723,6 +886,7 @@ public class employees_contents {
         archiveBtn.setStyle(iconBtnStyle(false, ACCENT, "#F5E8EA"));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
+        repositionSearchBar();
         cachedRows = fetchEmployees(tab);
         rebuildTable();
     }
@@ -737,7 +901,7 @@ public class employees_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  CONFIRMATION MODAL  — fixed size
+    //  CONFIRMATION MODAL
     // ══════════════════════════════════════════════════════
     private Pane buildConfirmModal(String context, String subMessage, Runnable onConfirm) {
         Pane overlay = new Pane();
@@ -748,7 +912,6 @@ public class employees_contents {
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
-        // ── Fixed dimensions ──────────────────────────────
         card.setPrefWidth(CONF_MODAL_W);  card.setMinWidth(CONF_MODAL_W);  card.setMaxWidth(CONF_MODAL_W);
         card.setPrefHeight(CONF_MODAL_H); card.setMinHeight(CONF_MODAL_H); card.setMaxHeight(CONF_MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
@@ -763,12 +926,12 @@ public class employees_contents {
         warnIcon.setIconColor(javafx.scene.paint.Color.web("#882F39"));
 
         Label heading = new Label("Are you sure you want to delete\nall entries for " + context + "?");
-        heading.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;-fx-font-weight: bold;" +
+        heading.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;-fx-font-weight: bold;" +
             "-fx-text-fill: #222222;-fx-text-alignment: center;-fx-alignment: center;");
         heading.setAlignment(Pos.CENTER); heading.setWrapText(true); heading.setMaxWidth(CONF_MODAL_W - 80);
 
         Label sub = new Label(subMessage);
-        sub.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
+        sub.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;" +
             "-fx-text-fill: #777777;-fx-text-alignment: center;-fx-alignment: center;");
         sub.setAlignment(Pos.CENTER); sub.setWrapText(true); sub.setMaxWidth(CONF_MODAL_W - 80);
 
@@ -814,7 +977,7 @@ public class employees_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, cachedRows);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -832,13 +995,15 @@ public class employees_contents {
     private VBox buildTable(double tableW, List<String[]> rows) {
         double dataW = archiveMode ? tableW - CHECKBOX_COL : tableW;
         VBox table = new VBox(0);
-        table.setStyle("-fx-border-color: "+TABLE_BORDER+";-fx-border-width: 1.5;" +
+        table.setStyle("-fx-border-color: " + TABLE_BORDER + ";-fx-border-width: 1.5;" +
             "-fx-border-radius: 10;-fx-background-color: white;-fx-background-radius: 10;" +
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);");
         table.getChildren().add(buildHeaderRow(tableW, dataW));
         if (rows.isEmpty()) {
-            Label empty = new Label(currentTab.equals("archived") ? "No archived employees." : "No employees found.");
-            empty.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
+            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
+                       : currentTab.equals("archived") ? "No archived employees." : "No employees found.";
+            Label empty = new Label(msg);
+            empty.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
                 "-fx-text-fill: #AAAAAA;-fx-padding: 24 0 24 16;");
             table.getChildren().add(empty);
         } else {
@@ -856,8 +1021,8 @@ public class employees_contents {
     private HBox buildHeaderRow(double tableW, double dataW) {
         HBox row = new HBox(0);
         row.setPrefHeight(HEADER_ROW_H);
-        row.setStyle("-fx-background-color: "+HEADER_BG+";-fx-background-radius: 10 10 0 0;" +
-            "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;-fx-border-width: 0 0 1.5 0;");
+        row.setStyle("-fx-background-color: " + HEADER_BG + ";-fx-background-radius: 10 10 0 0;" +
+            "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;-fx-border-width: 0 0 1.5 0;");
         row.setAlignment(Pos.CENTER_LEFT);
         row.getChildren().addAll(
             buildHeaderCell("Employee ID",       dataW * COL_EMPLOYEE_ID), buildColDivider(),
@@ -880,8 +1045,8 @@ public class employees_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(HEADER_ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
-            "-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";");
+        lbl.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";");
         return lbl;
     }
 
@@ -926,10 +1091,10 @@ public class employees_contents {
         String[] colors = pillColors(status);
         Label pill = new Label(status);
         pill.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 12px;-fx-font-weight: bold;" +
-            "-fx-text-fill: "+colors[1]+";" +
-            "-fx-background-color: "+colors[0]+";" +
+            "-fx-text-fill: " + colors[1] + ";" +
+            "-fx-background-color: " + colors[0] + ";" +
             "-fx-background-radius: 20;" +
             "-fx-padding: 4 14 4 14;"
         );
@@ -946,8 +1111,8 @@ public class employees_contents {
         combo.setValue(currentStatus != null ? currentStatus : "Active");
         combo.setPrefWidth(width - 20);
         combo.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
-            "-fx-background-color: white;-fx-border-color: "+ACCENT+";" +
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;" +
+            "-fx-background-color: white;-fx-border-color: " + ACCENT + ";" +
             "-fx-border-radius: 6;-fx-background-radius: 6;-fx-cursor: hand;"
         );
         combo.setOnAction(e -> {
@@ -964,9 +1129,9 @@ public class employees_contents {
     }
 
     private String rowStyle(String bg, String bottomRadius, String borderBottom) {
-        return "-fx-background-color: "+bg+";-fx-background-radius: "+bottomRadius+";" +
-               "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;" +
-               "-fx-border-width: 0 0 "+borderBottom+" 0;";
+        return "-fx-background-color: " + bg + ";-fx-background-radius: " + bottomRadius + ";" +
+               "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
+               "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
     private Label buildTextCell(String text, double width, boolean bold) {
@@ -974,15 +1139,15 @@ public class employees_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;" +
-            "-fx-font-weight: "+(bold?"bold":"normal")+";-fx-text-fill: #333333;");
+        lbl.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";-fx-text-fill: #333333;");
         return lbl;
     }
 
     private Region buildColDivider() {
         Region div = new Region();
         div.setPrefWidth(1.5); div.setMinWidth(1.5); div.setMaxWidth(1.5);
-        div.setStyle("-fx-background-color: "+TABLE_BORDER+"; -fx-opacity: 0.35;");
+        div.setStyle("-fx-background-color: " + TABLE_BORDER + "; -fx-opacity: 0.35;");
         VBox.setVgrow(div, Priority.ALWAYS);
         return div;
     }
@@ -1001,55 +1166,69 @@ public class employees_contents {
     //  STYLE HELPERS
     // ══════════════════════════════════════════════════════
     private String iconBtnStyle(boolean active, String borderColor, String bgColor) {
-        return "-fx-background-color: "+bgColor+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+borderColor+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+        return "-fx-background-color: " + bgColor + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + borderColor + ";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+    }
+
+    // ── Labeled green button — mirrors addSupplierBtn style ──
+    private String addEmpBtnStyle(boolean hovered) {
+        return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";" +
+               "-fx-background-radius: 8;" +
+               "-fx-border-color: #155724;" +
+               "-fx-border-radius: 8;" +
+               "-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: #155724;" +
+               "-fx-cursor: hand;";
     }
 
     private String tabBtnStyle(boolean selected) {
         return selected
-            ? "-fx-background-color: "+ACCENT+";-fx-background-radius: 8;-fx-font-family: '"+FONT_FAMILY+"';" +
+            ? "-fx-background-color: " + ACCENT + ";-fx-background-radius: 8;-fx-font-family: '" + FONT_FAMILY + "';" +
               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;"
-            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-              "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;-fx-border-color: " + ACCENT + ";" +
+              "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '" + FONT_FAMILY + "';" +
+              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String tabBtnHoverStyle() {
-        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;-fx-border-color: " + ACCENT + ";" +
+               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String archiveAllBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#EDD5D8":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+ACCENT+";-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: " + (hovered ? "#EDD5D8" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + ACCENT + ";-fx-border-radius: 8;-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String confirmBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: white;-fx-cursor: hand;";
     }
     private String deleteBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#F8D7DA":"#FDF0F1")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#F8D7DA" : "#FDF0F1") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #721C24;-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String exportCsvBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#C3E6CB":"#D4EDDA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #155724;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: #155724;-fx-cursor: hand;";
     }
     private String modalNoBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#E9ECEF":"#F8F9FA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#E9ECEF" : "#F8F9FA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #CCCCCC;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: #555555;-fx-cursor: hand;";
     }
     private String modalYesBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: white;-fx-cursor: hand;";
     }
 }

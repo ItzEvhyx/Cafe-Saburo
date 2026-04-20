@@ -6,6 +6,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
@@ -34,10 +35,14 @@ public class orders_contents {
     private static final double TOP_PADDING  = 20;
     private static final double SIDE_PADDING = 24;
     private static final double HEADER_H     = 56;
-    private static final double COL_ORDER_ID = 0.16;
-    private static final double COL_CUST_ID  = 0.24;
-    private static final double COL_STATUS   = 0.30;
-    private static final double COL_PAYMENT  = 0.30;
+
+    // ── 5-column layout: Order ID | Customer ID | Customer Name | Status | Payment
+    private static final double COL_ORDER_ID   = 0.14;
+    private static final double COL_CUST_ID    = 0.16;
+    private static final double COL_CUST_NAME  = 0.26;
+    private static final double COL_STATUS     = 0.24;
+    private static final double COL_PAYMENT    = 0.20;
+
     private static final double ROW_H        = 44;
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
@@ -68,20 +73,35 @@ public class orders_contents {
     private String         currentTab  = "active";
     private boolean        editMode    = false;
     private boolean        archiveMode = false;
+    private String         searchQuery = "";
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
+    // cachedRows: [orderId, customerId, customerName, orderStatus, paymentType]
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label editBtn;
-    private Label archiveBtn;
-    private Label archiveAllBtn;
-    private Label confirmBtn;
-    private Label activeTabBtn;
-    private Label archivedTabBtn;
-    private Label deleteBtn;
-    private Label exportCsvBtn;
+    private Label     editBtn;
+    private Label     archiveBtn;
+    private Label     archiveAllBtn;
+    private Label     confirmBtn;
+    private Label     activeTabBtn;
+    private Label     archivedTabBtn;
+    private Label     deleteBtn;
+    private Label     exportCsvBtn;
+    private TextField searchField;
+    private HBox      searchBar;
+
+    // ── Layout values needed for repositioning ────────────
+    private double btnY;
+    private double gap;
+    private double tabW;
+    private double archAllW;
+    private double confirmW;
+    private double searchW;
+    private double activeTabX;
+    private double archAllX;
+    private double confirmX;
 
     private static boolean fontsLoaded = false;
 
@@ -104,10 +124,25 @@ public class orders_contents {
         loadFonts();
     }
 
+    // ── Reposition search bar depending on archiveMode ────
+    // When archiveMode is ON:  right edge clamps to left of archiveAll button
+    // When archiveMode is OFF: right edge clamps to left of activeTab button
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
+        double newX = rightEdge - searchW;
+        searchBar.setLayoutX(newX);
+    }
+
+    // ── Live prepend from menu_contents order submission ──
+    // rows: [orderId, customerId, customerName, orderStatus, paymentType]
     public void prependOrder(String orderId, String customerId, String paymentMethod) {
+        // Look up customer name from DB; fall back to customerId if unavailable
+        String customerName = fetchCustomerName(customerId);
         String[] newRow = new String[]{
             orderId,
             customerId,
+            customerName,
             "Pending",
             paymentMethod != null ? paymentMethod : "Cash"
         };
@@ -117,29 +152,69 @@ public class orders_contents {
         }
     }
 
+    // ── Fetch a single customer name by ID ────────────────
+    private String fetchCustomerName(String customerId) {
+        if (conn == null || customerId == null) return "—";
+        try {
+            if (conn.isClosed()) return "—";
+        } catch (Exception e) { return "—"; }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT customer_name FROM dbo.Customers WHERE customer_id = ? AND is_deleted = 0")) {
+            ps.setString(1, customerId);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                String name = rs.getString("customer_name");
+                rs.close();
+                return name != null ? name : "—";
+            }
+            rs.close();
+        } catch (Exception e) { e.printStackTrace(); }
+        return "—";
+    }
+
+    // ── DB fetch — now includes customer_name via LEFT JOIN ─
+    // Returns rows as: [orderId, customerId, customerName, orderStatus, paymentType]
     private List<String[]> fetchOrders(String tab) {
         List<String[]> rows = new ArrayList<>();
         if (conn == null) return rows;
         try { if (conn.isClosed()) return rows; } catch (Exception e) { return rows; }
         String sql =
-            "SELECT order_id, customer_id, order_status, payment_type " +
-            "FROM dbo.Orders " +
-            "WHERE is_deleted = 0 AND status = ? " +
-            "ORDER BY order_date DESC";
+            "SELECT o.order_id, o.customer_id, " +
+            "       COALESCE(c.customer_name, '—') AS customer_name, " +
+            "       o.order_status, o.payment_type " +
+            "FROM dbo.Orders AS o " +
+            "LEFT JOIN dbo.Customers AS c ON o.customer_id = c.customer_id " +
+            "WHERE o.is_deleted = 0 AND o.status = ? " +
+            "ORDER BY o.order_date DESC";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, tab);
             ResultSet rs = ps.executeQuery();
             while (rs.next()) {
                 rows.add(new String[]{
-                    rs.getString("order_id")     != null ? rs.getString("order_id")     : "—",
-                    rs.getString("customer_id")  != null ? rs.getString("customer_id")  : "—",
-                    rs.getString("order_status") != null ? rs.getString("order_status") : "—",
-                    rs.getString("payment_type") != null ? rs.getString("payment_type") : "—"
+                    rs.getString("order_id")      != null ? rs.getString("order_id")      : "—",
+                    rs.getString("customer_id")   != null ? rs.getString("customer_id")   : "—",
+                    rs.getString("customer_name") != null ? rs.getString("customer_name") : "—",
+                    rs.getString("order_status")  != null ? rs.getString("order_status")  : "—",
+                    rs.getString("payment_type")  != null ? rs.getString("payment_type")  : "—"
                 });
             }
             rs.close();
         } catch (Exception e) { e.printStackTrace(); }
         return rows;
+    }
+
+    // ── Filtered rows based on current searchQuery ────────
+    // Searches across customer name (index 2)
+    private List<String[]> getFilteredRows() {
+        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
+        String q = searchQuery.trim().toLowerCase();
+        List<String[]> filtered = new ArrayList<>();
+        for (String[] row : cachedRows) {
+            // Search by customer name (index 2) or order ID (index 0)
+            if (row[2].toLowerCase().contains(q) || row[0].toLowerCase().contains(q))
+                filtered.add(row);
+        }
+        return filtered;
     }
 
     private void updateOrderStatus(String orderId, String newStatus) {
@@ -188,7 +263,8 @@ public class orders_contents {
     }
 
     private void exportCsv() {
-        if (cachedRows.isEmpty()) return;
+        List<String[]> rows = getFilteredRows();
+        if (rows.isEmpty()) return;
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Save Order History as CSV");
         chooser.setInitialFileName("orders_" + currentTab + ".csv");
@@ -198,10 +274,16 @@ public class orders_contents {
         File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
         if (file == null) return;
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Order ID,Customer ID,Order Status,Payment Type");
+            writer.write("Order ID,Customer ID,Customer Name,Order Status,Payment Type");
             writer.newLine();
-            for (String[] row : cachedRows) {
-                writer.write(escapeCsv(row[0])+","+escapeCsv(row[1])+","+escapeCsv(row[2])+","+escapeCsv(row[3]));
+            for (String[] row : rows) {
+                writer.write(
+                    escapeCsv(row[0]) + "," +
+                    escapeCsv(row[1]) + "," +
+                    escapeCsv(row[2]) + "," +
+                    escapeCsv(row[3]) + "," +
+                    escapeCsv(row[4])
+                );
                 writer.newLine();
             }
         } catch (Exception e) { e.printStackTrace(); }
@@ -214,6 +296,9 @@ public class orders_contents {
         return value;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  MAIN VIEW
+    // ══════════════════════════════════════════════════════
     public Pane getView() {
         stackRoot = new StackPane();
         stackRoot.setPrefWidth(totalW);
@@ -224,15 +309,22 @@ public class orders_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH=36, btnY=TOP_PADDING+10, iconW=36, gap=8,
-               tabW=90, archAllW=100, confirmW=90, csvW=120;
+        double btnH    = 36;
+        btnY           = TOP_PADDING + 10;
+        double iconW   = 36;
+        gap            = 8;
+        tabW           = 90;
+        archAllW       = 100;
+        confirmW       = 90;
+        double csvW    = 120;
+        searchW        = 200;
 
         Label title = new Label("Order History");
         title.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 36px;" +
             "-fx-font-weight: 800;" +
-            "-fx-text-fill: "+ACCENT+";"
+            "-fx-text-fill: " + ACCENT + ";"
         );
 
         FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
@@ -276,13 +368,20 @@ public class orders_contents {
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
+        // ── Right-side button layout (right → left) ───────
+        // delete | gap | exportCsv | gap | archivedTab | gap | activeTab | gap | confirm | gap | archiveAll | gap | search
         double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX   - gap - csvW;
-        double archivedTabX = exportCsvX - gap - tabW;
-        double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX - gap - confirmW;
-        double archAllX     = confirmX   - gap - archAllW;
+        double exportCsvX   = deleteX      - gap - csvW;
+        double archivedTabX = exportCsvX   - gap - tabW;
+        activeTabX          = archivedTabX - gap - tabW;
+        confirmX            = activeTabX   - gap - confirmW;
+        archAllX            = confirmX     - gap - archAllW;
 
+        // Initial search bar position (archive mode OFF → clamp to left of activeTab)
+        double searchRightEdge = activeTabX - gap;
+        double searchX         = searchRightEdge - searchW;
+
+        // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -297,12 +396,13 @@ public class orders_contents {
         deleteBtn.setOnMouseExited(e  -> deleteBtn.setStyle(deleteBtnStyle(false)));
         deleteBtn.setOnMouseClicked(e ->
             stackRoot.getChildren().add(buildConfirmModal(
-                "Orders ("+currentTab+")",
+                "Orders (" + currentTab + ")",
                 "This will permanently remove all orders in this view.\nThis action cannot be undone.",
                 () -> { hardDeleteAll(); cachedRows.clear(); selectedIds.clear(); rebuildTable(); }
             ))
         );
 
+        // ── Export CSV button ─────────────────────────────
         exportCsvBtn = new Label("Export CSV");
         FontIcon csvIcon = new FontIcon(FontAwesomeSolid.FILE_DOWNLOAD);
         csvIcon.setIconSize(13);
@@ -318,6 +418,7 @@ public class orders_contents {
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
         exportCsvBtn.setOnMouseClicked(e -> exportCsv());
 
+        // ── Tab buttons ───────────────────────────────────
         activeTabBtn   = buildTabLabel("Active",   true);
         activeTabBtn.setLayoutX(activeTabX);   activeTabBtn.setLayoutY(btnY);
         archivedTabBtn = buildTabLabel("Archived", false);
@@ -330,6 +431,7 @@ public class orders_contents {
         archivedTabBtn.setOnMouseExited(e  -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
+        // ── Archive All button ────────────────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW); archiveAllBtn.setPrefHeight(btnH);
@@ -345,6 +447,7 @@ public class orders_contents {
             rebuildTable();
         });
 
+        // ── Confirm button ────────────────────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW); confirmBtn.setPrefHeight(btnH);
@@ -362,10 +465,49 @@ public class orders_contents {
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
+            repositionSearchBar();
             cachedRows = fetchOrders(currentTab);
             rebuildTable();
         });
 
+        // ── Search bar ────────────────────────────────────
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        searchField = new TextField();
+        searchField.setPromptText("Search name or order...");
+        searchField.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+        searchField.setPrefWidth(searchW - 42);
+
+        searchBar = new HBox(6, searchIcon, searchField);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        searchBar.setPadding(new Insets(0, 10, 0, 12));
+        searchBar.setPrefWidth(searchW);
+        searchBar.setPrefHeight(btnH);
+        searchBar.setLayoutX(searchX);
+        searchBar.setLayoutY(btnY);
+        searchBar.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 20;"
+        );
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            searchQuery = newVal == null ? "" : newVal.trim();
+            rebuildTable();
+        });
+
+        // ── Table ─────────────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
@@ -373,8 +515,10 @@ public class orders_contents {
         cachedRows  = fetchOrders("active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
-        root.getChildren().addAll(titleRow, archiveAllBtn, confirmBtn,
-            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll);
+        root.getChildren().addAll(
+            titleRow, searchBar, archiveAllBtn, confirmBtn,
+            activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
+        );
         stackRoot.getChildren().add(root);
         return stackRoot;
     }
@@ -387,6 +531,7 @@ public class orders_contents {
         archiveAllBtn.setVisible(archiveMode);
         confirmBtn.setVisible(archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
+        repositionSearchBar();
         rebuildTable();
     }
 
@@ -401,6 +546,8 @@ public class orders_contents {
         if (currentTab.equals(tab)) return;
         currentTab = tab; editMode = false; archiveMode = false;
         selectedIds.clear();
+        searchQuery = "";
+        if (searchField != null) searchField.clear();
         FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
         penIcon.setIconSize(15);
         penIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -413,6 +560,7 @@ public class orders_contents {
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
+        repositionSearchBar();
         cachedRows = fetchOrders(tab);
         rebuildTable();
     }
@@ -428,22 +576,15 @@ public class orders_contents {
 
     private Pane buildConfirmModal(String context, String subMessage, Runnable onConfirm) {
         Pane overlay = new Pane();
-        overlay.setPrefWidth(totalW);
-        overlay.setPrefHeight(totalH);
-        overlay.setMinWidth(totalW);
-        overlay.setMinHeight(totalH);
-        overlay.setMaxWidth(totalW);
-        overlay.setMaxHeight(totalH);
+        overlay.setPrefWidth(totalW); overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);  overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);  overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(MODAL_W);
-        card.setMinWidth(MODAL_W);
-        card.setMaxWidth(MODAL_W);
-        card.setPrefHeight(MODAL_H);
-        card.setMinHeight(MODAL_H);
-        card.setMaxHeight(MODAL_H);
+        card.setPrefWidth(MODAL_W); card.setMinWidth(MODAL_W); card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H); card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
         card.setStyle(
             "-fx-background-color: white;" +
@@ -457,7 +598,7 @@ public class orders_contents {
 
         Label heading = new Label("Are you sure you want to delete\nall entries for " + context + "?");
         heading.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 14px;" +
             "-fx-font-weight: bold;" +
             "-fx-text-fill: #222222;" +
@@ -470,7 +611,7 @@ public class orders_contents {
 
         Label sub = new Label(subMessage);
         sub.setStyle(
-            "-fx-font-family: '"+FONT_FAMILY+"';" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
             "-fx-font-size: 12px;" +
             "-fx-text-fill: #777777;" +
             "-fx-text-alignment: center;" +
@@ -504,12 +645,9 @@ public class orders_contents {
         card.getChildren().addAll(warnIcon, heading, sub, btnRow);
 
         StackPane centred = new StackPane(card);
-        centred.setPrefWidth(totalW);
-        centred.setPrefHeight(totalH);
-        centred.setMinWidth(totalW);
-        centred.setMinHeight(totalH);
-        centred.setMaxWidth(totalW);
-        centred.setMaxHeight(totalH);
+        centred.setPrefWidth(totalW); centred.setPrefHeight(totalH);
+        centred.setMinWidth(totalW);  centred.setMinHeight(totalH);
+        centred.setMaxWidth(totalW);  centred.setMaxHeight(totalH);
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);
         return overlay;
@@ -525,7 +663,7 @@ public class orders_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, cachedRows);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -540,38 +678,47 @@ public class orders_contents {
     private VBox buildTable(double tableW, List<String[]> rows) {
         double dataW = archiveMode ? tableW - CHECKBOX_COL : tableW;
         VBox table = new VBox(0);
-        table.setStyle("-fx-border-color: "+TABLE_BORDER+";-fx-border-width: 1.5;" +
+        table.setStyle(
+            "-fx-border-color: " + TABLE_BORDER + ";-fx-border-width: 1.5;" +
             "-fx-border-radius: 10;-fx-background-color: white;-fx-background-radius: 10;" +
-            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);");
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);"
+        );
         table.getChildren().add(buildHeaderRow(tableW, dataW));
         if (rows.isEmpty()) {
-            Label empty = new Label(currentTab.equals("archived") ? "No archived orders." : "No orders found.");
-            empty.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
+            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
+                       : currentTab.equals("archived") ? "No archived orders." : "No orders found.";
+            Label empty = new Label(msg);
+            empty.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
                 "-fx-text-fill: #AAAAAA;-fx-padding: 24 0 24 16;");
             table.getChildren().add(empty);
         } else {
             for (int i = 0; i < rows.size(); i++) {
                 String[] order = rows.get(i);
                 table.getChildren().add(buildDataRow(
-                    order[0], order[1], order[2], order[3],
+                    order[0], order[1], order[2], order[3], order[4],
                     i % 2 == 0 ? ROW_WHITE_BG : ROW_ALT_BG,
-                    tableW, dataW, i == rows.size() - 1));
+                    tableW, dataW, i == rows.size() - 1
+                ));
             }
         }
         return table;
     }
 
+    // ── 5-column header ───────────────────────────────────
     private HBox buildHeaderRow(double tableW, double dataW) {
         HBox row = new HBox(0);
         row.setPrefHeight(HEADER_ROW_H);
-        row.setStyle("-fx-background-color: "+HEADER_BG+";-fx-background-radius: 10 10 0 0;" +
-            "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;-fx-border-width: 0 0 1.5 0;");
+        row.setStyle(
+            "-fx-background-color: " + HEADER_BG + ";-fx-background-radius: 10 10 0 0;" +
+            "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;-fx-border-width: 0 0 1.5 0;"
+        );
         row.setAlignment(Pos.CENTER_LEFT);
         row.getChildren().addAll(
-            buildHeaderCell("Order ID",     dataW * COL_ORDER_ID), buildColDivider(),
-            buildHeaderCell("Customer ID",  dataW * COL_CUST_ID),  buildColDivider(),
-            buildHeaderCell("Order Status", dataW * COL_STATUS),   buildColDivider(),
-            buildHeaderCell("Payment Type", dataW * COL_PAYMENT)
+            buildHeaderCell("Order ID",      dataW * COL_ORDER_ID),  buildColDivider(),
+            buildHeaderCell("Customer ID",   dataW * COL_CUST_ID),   buildColDivider(),
+            buildHeaderCell("Customer Name", dataW * COL_CUST_NAME), buildColDivider(),
+            buildHeaderCell("Order Status",  dataW * COL_STATUS),    buildColDivider(),
+            buildHeaderCell("Payment Type",  dataW * COL_PAYMENT)
         );
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
@@ -587,29 +734,33 @@ public class orders_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(HEADER_ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 14px;" +
-            "-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";");
+        lbl.setStyle("-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";");
         return lbl;
     }
 
-    private HBox buildDataRow(String orderId, String custId, String status,
-                               String payment, String bg, double tableW, double dataW, boolean isLast) {
+    // ── 5-column data row ─────────────────────────────────
+    // row: [orderId, customerId, customerName, orderStatus, paymentType]
+    private HBox buildDataRow(String orderId, String custId, String custName,
+                               String status, String payment,
+                               String bg, double tableW, double dataW, boolean isLast) {
         HBox row = new HBox(0);
         row.setPrefHeight(ROW_H); row.setAlignment(Pos.CENTER_LEFT);
-        String bottomRadius = isLast ? "0 0 10 10" : "0";
-        String borderBottom = isLast ? "0" : "1";
-        boolean selected = selectedIds.contains(orderId);
+        String  bottomRadius = isLast ? "0 0 10 10" : "0";
+        String  borderBottom = isLast ? "0" : "1";
+        boolean selected     = selectedIds.contains(orderId);
         row.setStyle(rowStyle(selected ? "#FDE8EA" : bg, bottomRadius, borderBottom));
         row.setOnMouseEntered(e -> { if (!selectedIds.contains(orderId)) row.setStyle(rowStyle("#F5E8EA", bottomRadius, borderBottom)); });
         row.setOnMouseExited(e  -> row.setStyle(rowStyle(selectedIds.contains(orderId) ? "#FDE8EA" : bg, bottomRadius, borderBottom)));
         row.getChildren().addAll(
-            buildTextCell(orderId, dataW * COL_ORDER_ID, true), buildColDivider(),
-            buildTextCell(custId,  dataW * COL_CUST_ID,  false), buildColDivider(),
+            buildTextCell(orderId,  dataW * COL_ORDER_ID,  true),  buildColDivider(),
+            buildTextCell(custId,   dataW * COL_CUST_ID,   false), buildColDivider(),
+            buildTextCell(custName, dataW * COL_CUST_NAME, false), buildColDivider(),
             (editMode && currentTab.equals("active"))
                 ? buildStatusDropdown(orderId, status, dataW * COL_STATUS)
                 : buildStatusCell(status, dataW * COL_STATUS),
             buildColDivider(),
-            buildTextCell(payment, dataW * COL_PAYMENT, false)
+            buildTextCell(payment,  dataW * COL_PAYMENT,   false)
         );
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
@@ -631,9 +782,11 @@ public class orders_contents {
         if (status == null) status = "—";
         String[] colors = pillColors(status);
         Label pill = new Label(status);
-        pill.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;-fx-font-weight: bold;" +
-            "-fx-text-fill: "+colors[1]+";-fx-background-color: "+colors[0]+";" +
-            "-fx-background-radius: 20;-fx-padding: 4 14 4 14;");
+        pill.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;-fx-font-weight: bold;" +
+            "-fx-text-fill: " + colors[1] + ";-fx-background-color: " + colors[0] + ";" +
+            "-fx-background-radius: 20;-fx-padding: 4 14 4 14;"
+        );
         HBox cell = new HBox(pill);
         cell.setPrefWidth(width); cell.setPrefHeight(ROW_H);
         cell.setPadding(new Insets(0, 0, 0, 16));
@@ -646,14 +799,16 @@ public class orders_contents {
         combo.getItems().addAll("Pending", "Preparing", "Completed", "Cancelled");
         combo.setValue(currentStatus != null ? currentStatus : "Pending");
         combo.setPrefWidth(width - 20);
-        combo.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 12px;" +
-            "-fx-background-color: white;-fx-border-color: "+ACCENT+";" +
-            "-fx-border-radius: 6;-fx-background-radius: 6;-fx-cursor: hand;");
+        combo.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;" +
+            "-fx-background-color: white;-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-radius: 6;-fx-background-radius: 6;-fx-cursor: hand;"
+        );
         combo.setOnAction(e -> {
             String chosen = combo.getValue();
             if (chosen == null || chosen.equals(currentStatus)) return;
             updateOrderStatus(orderId, chosen);
-            for (String[] row : cachedRows) { if (row[0].equals(orderId)) { row[2] = chosen; break; } }
+            for (String[] r : cachedRows) { if (r[0].equals(orderId)) { r[3] = chosen; break; } }
         });
         HBox cell = new HBox(combo);
         cell.setPrefWidth(width); cell.setPrefHeight(ROW_H);
@@ -663,9 +818,9 @@ public class orders_contents {
     }
 
     private String rowStyle(String bg, String bottomRadius, String borderBottom) {
-        return "-fx-background-color: "+bg+";-fx-background-radius: "+bottomRadius+";" +
-               "-fx-border-color: transparent transparent "+TABLE_BORDER+" transparent;" +
-               "-fx-border-width: 0 0 "+borderBottom+" 0;";
+        return "-fx-background-color: " + bg + ";-fx-background-radius: " + bottomRadius + ";" +
+               "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
+               "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
     private Label buildTextCell(String text, double width, boolean bold) {
@@ -673,15 +828,17 @@ public class orders_contents {
         lbl.setPrefWidth(width); lbl.setPrefHeight(ROW_H);
         lbl.setPadding(new Insets(0, 0, 0, 16));
         lbl.setAlignment(Pos.CENTER_LEFT);
-        lbl.setStyle("-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;" +
-            "-fx-font-weight: "+(bold?"bold":"normal")+";-fx-text-fill: #333333;");
+        lbl.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";-fx-text-fill: #333333;"
+        );
         return lbl;
     }
 
     private Region buildColDivider() {
         Region div = new Region();
         div.setPrefWidth(1.5); div.setMinWidth(1.5); div.setMaxWidth(1.5);
-        div.setStyle("-fx-background-color: "+TABLE_BORDER+"; -fx-opacity: 0.35;");
+        div.setStyle("-fx-background-color: " + TABLE_BORDER + "; -fx-opacity: 0.35;");
         VBox.setVgrow(div, Priority.ALWAYS);
         return div;
     }
@@ -696,63 +853,72 @@ public class orders_contents {
         };
     }
 
+    // ══════════════════════════════════════════════════════
+    //  STYLE HELPERS
+    // ══════════════════════════════════════════════════════
     private String tabBtnStyle(boolean selected) {
         return selected
-            ? "-fx-background-color: "+ACCENT+";-fx-background-radius: 8;-fx-font-family: '"+FONT_FAMILY+"';" +
-              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;"
-            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-              "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-              "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+            ? "-fx-background-color: " + ACCENT + ";-fx-background-radius: 8;" +
+              "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+              "-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;"
+            : "-fx-background-color: #F5E8EA;-fx-background-radius: 8;" +
+              "-fx-border-color: " + ACCENT + ";-fx-border-radius: 8;-fx-border-width: 1.5;" +
+              "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+              "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String tabBtnHoverStyle() {
-        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;-fx-border-color: "+ACCENT+";" +
-               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-font-family: '"+FONT_FAMILY+"';" +
-               "-fx-font-size: 13px;-fx-font-weight: bold;-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: #EDD5D8;-fx-background-radius: 8;" +
+               "-fx-border-color: " + ACCENT + ";-fx-border-radius: 8;-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String archiveBtnStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#D4EDDA":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+        return "-fx-background-color: " + (active ? "#D4EDDA" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + (active ? "#155724" : ACCENT) + ";" +
+               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String archiveAllBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#EDD5D8":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+ACCENT+";-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: "+ACCENT+";-fx-cursor: hand;";
+        return "-fx-background-color: " + (hovered ? "#EDD5D8" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + ACCENT + ";-fx-border-radius: 8;-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: " + ACCENT + ";-fx-cursor: hand;";
     }
     private String confirmBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: white;-fx-cursor: hand;";
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;";
     }
     private String editBtnStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#D4EDDA":"#F5E8EA")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+        return "-fx-background-color: " + (active ? "#D4EDDA" : "#F5E8EA") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + (active ? "#155724" : ACCENT) + ";" +
+               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String editBtnHoverStyle(boolean active) {
-        return "-fx-background-color: "+(active?"#C3E6CB":"#EDD5D8")+";-fx-background-radius: 8;" +
-               "-fx-border-color: "+(active?"#155724":ACCENT)+";-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
+        return "-fx-background-color: " + (active ? "#C3E6CB" : "#EDD5D8") + ";-fx-background-radius: 8;" +
+               "-fx-border-color: " + (active ? "#155724" : ACCENT) + ";" +
+               "-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String deleteBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#F8D7DA":"#FDF0F1")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#F8D7DA" : "#FDF0F1") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #721C24;-fx-border-radius: 8;-fx-border-width: 1.5;-fx-cursor: hand;";
     }
     private String exportCsvBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#C3E6CB":"#D4EDDA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #155724;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: #155724;-fx-cursor: hand;";
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: #155724;-fx-cursor: hand;";
     }
     private String modalNoBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#E9ECEF":"#F8F9FA")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#E9ECEF" : "#F8F9FA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #CCCCCC;-fx-border-radius: 8;-fx-border-width: 1.5;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: #555555;-fx-cursor: hand;";
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: #555555;-fx-cursor: hand;";
     }
     private String modalYesBtnStyle(boolean hovered) {
-        return "-fx-background-color: "+(hovered?"#A93226":"#882F39")+";-fx-background-radius: 8;" +
+        return "-fx-background-color: " + (hovered ? "#A93226" : "#882F39") + ";-fx-background-radius: 8;" +
                "-fx-border-color: transparent;-fx-border-radius: 8;-fx-border-width: 0;" +
-               "-fx-font-family: '"+FONT_FAMILY+"';-fx-font-size: 13px;-fx-font-weight: bold;" +
-               "-fx-text-fill: white;-fx-cursor: hand;";
+               "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;-fx-text-fill: white;-fx-cursor: hand;";
     }
 }

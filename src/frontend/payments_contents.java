@@ -7,6 +7,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -67,20 +68,31 @@ public class payments_contents {
 
     private String         currentTab  = "active";
     private boolean        archiveMode = false;
+    private String         searchQuery = "";
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label archiveBtn;
-    private Label analyticsBtn;
-    private Label archiveAllBtn;
-    private Label confirmBtn;
-    private Label activeTabBtn;
-    private Label archivedTabBtn;
-    private Label deleteBtn;
-    private Label exportCsvBtn;
+    private Label     archiveBtn;
+    private Label     analyticsBtn;
+    private Label     archiveAllBtn;
+    private Label     confirmBtn;
+    private Label     activeTabBtn;
+    private Label     archivedTabBtn;
+    private Label     deleteBtn;
+    private Label     exportCsvBtn;
+    private TextField searchField;
+    private HBox      searchBar;
+
+    // ── Layout values needed for repositioning ────────────
+    private double btnY;
+    private double gap;
+    private double searchW;
+    private double activeTabX;
+    private double archAllX;
+    private double confirmX;
 
     private static boolean fontsLoaded = false;
 
@@ -103,6 +115,14 @@ public class payments_contents {
         loadFonts();
     }
 
+    // ── Reposition search bar depending on archiveMode ────
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
+        double newX = rightEdge - searchW;
+        searchBar.setLayoutX(newX);
+    }
+
     // ══════════════════════════════════════════════════════
     //  PUBLIC LIVE-UPDATE API
     // ══════════════════════════════════════════════════════
@@ -118,6 +138,18 @@ public class payments_contents {
             cachedRows.add(0, newRow);
             rebuildTable();
         }
+    }
+
+    // ── Filtered rows based on searchQuery ───────────────
+    private List<String[]> getFilteredRows() {
+        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
+        String q = searchQuery.trim().toLowerCase();
+        List<String[]> filtered = new ArrayList<>();
+        for (String[] row : cachedRows) {
+            if (row[0].toLowerCase().contains(q) || row[1].toLowerCase().contains(q))
+                filtered.add(row);
+        }
+        return filtered;
     }
 
     // ══════════════════════════════════════════════════════
@@ -389,14 +421,17 @@ public class payments_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH     = 36;
-        double btnY     = TOP_PADDING + 10;
-        double iconW    = 36;
-        double gap      = 8;
-        double tabW     = 90;
-        double archAllW = 100;
-        double confirmW = 90;
-        double csvW     = 120;
+        double btnH      = 36;
+        btnY             = TOP_PADDING + 10;
+        double iconW     = 36;
+        gap              = 8;
+        double tabW      = 90;
+        double archAllW  = 100;
+        double confirmW  = 90;
+        double csvW      = 120;
+        // ── Width for the new labeled Analytics button ────
+        double analyticsW = 180;
+        searchW           = 200;
 
         Label title = new Label("Payment History");
         title.setStyle(
@@ -406,20 +441,23 @@ public class payments_contents {
             "-fx-text-fill: " + ACCENT + ";"
         );
 
+        // ── Analytics & Operations button (labeled, green — mirrors addSupplierBtn) ──
         FontIcon analyticsIcon = new FontIcon(FontAwesomeSolid.CHART_BAR);
-        analyticsIcon.setIconSize(15);
+        analyticsIcon.setIconSize(14);
         analyticsIcon.setIconColor(javafx.scene.paint.Color.web("#155724"));
-        analyticsBtn = new Label();
+        analyticsBtn = new Label("Analytics & Operations");
         analyticsBtn.setGraphic(analyticsIcon);
+        analyticsBtn.setGraphicTextGap(6);
         analyticsBtn.setCursor(javafx.scene.Cursor.HAND);
         analyticsBtn.setStyle(analyticsBtnStyle(false));
         analyticsBtn.setPrefHeight(btnH);
-        analyticsBtn.setPrefWidth(iconW);
+        analyticsBtn.setPrefWidth(analyticsW);
         analyticsBtn.setAlignment(Pos.CENTER);
         analyticsBtn.setOnMouseEntered(e -> analyticsBtn.setStyle(analyticsBtnStyle(true)));
         analyticsBtn.setOnMouseExited(e  -> analyticsBtn.setStyle(analyticsBtnStyle(false)));
         analyticsBtn.setOnMouseClicked(e -> openAnalyticsModal());
 
+        // ── Archive button (icon-only) ────────────────────
         FontIcon boxIcon = new FontIcon(FontAwesomeSolid.ARCHIVE);
         boxIcon.setIconSize(15);
         boxIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -440,13 +478,18 @@ public class payments_contents {
         titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
+        // ── Right-side button layout (right → left) ───────
         double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX - gap - csvW;
-        double archivedTabX = exportCsvX - gap - tabW;
-        double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX - gap - confirmW;
-        double archAllX     = confirmX - gap - archAllW;
+        double exportCsvX   = deleteX      - gap - csvW;
+        double archivedTabX = exportCsvX   - gap - tabW;
+        activeTabX          = archivedTabX - gap - tabW;
+        confirmX            = activeTabX   - gap - confirmW;
+        archAllX            = confirmX     - gap - archAllW;
 
+        double searchRightEdge = activeTabX - gap;
+        double searchX         = searchRightEdge - searchW;
+
+        // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -474,6 +517,7 @@ public class payments_contents {
             ))
         );
 
+        // ── Export CSV button ─────────────────────────────
         exportCsvBtn = new Label("Export CSV");
         FontIcon csvIcon = new FontIcon(FontAwesomeSolid.FILE_DOWNLOAD);
         csvIcon.setIconSize(13);
@@ -495,6 +539,7 @@ public class payments_contents {
             payments_util.exportCsv(stage, currentTab, cachedRows);
         });
 
+        // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
         activeTabBtn.setLayoutX(activeTabX);
         activeTabBtn.setLayoutY(btnY);
@@ -517,6 +562,7 @@ public class payments_contents {
             archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
+        // ── Archive All button ────────────────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW);
@@ -534,6 +580,7 @@ public class payments_contents {
             rebuildTable();
         });
 
+        // ── Confirm button ────────────────────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW);
@@ -555,10 +602,49 @@ public class payments_contents {
             archiveAllBtn.setVisible(false);
             confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
+            repositionSearchBar();
             cachedRows = payments_util.fetchPayments(conn, currentTab);
             rebuildTable();
         });
 
+        // ── Search bar ────────────────────────────────────
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        searchField = new TextField();
+        searchField.setPromptText("Search payment or order ID...");
+        searchField.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+        searchField.setPrefWidth(searchW - 42);
+
+        searchBar = new HBox(6, searchIcon, searchField);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        searchBar.setPadding(new Insets(0, 10, 0, 12));
+        searchBar.setPrefWidth(searchW);
+        searchBar.setPrefHeight(btnH);
+        searchBar.setLayoutX(searchX);
+        searchBar.setLayoutY(btnY);
+        searchBar.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 20;"
+        );
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            searchQuery = newVal == null ? "" : newVal.trim();
+            rebuildTable();
+        });
+
+        // ── Table ─────────────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
@@ -567,7 +653,7 @@ public class payments_contents {
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
-            titleRow, archiveAllBtn, confirmBtn,
+            titleRow, searchBar, archiveAllBtn, confirmBtn,
             activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
         );
         stackRoot.getChildren().add(root);
@@ -585,6 +671,7 @@ public class payments_contents {
         archiveAllBtn.setVisible(archiveMode);
         confirmBtn.setVisible(archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
+        repositionSearchBar();
         rebuildTable();
     }
 
@@ -605,6 +692,8 @@ public class payments_contents {
         currentTab  = tab;
         archiveMode = false;
         selectedIds.clear();
+        searchQuery = "";
+        if (searchField != null) searchField.clear();
 
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
@@ -614,6 +703,7 @@ public class payments_contents {
 
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
+        repositionSearchBar();
         cachedRows = payments_util.fetchPayments(conn, tab);
         rebuildTable();
     }
@@ -737,7 +827,7 @@ public class payments_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, cachedRows);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -774,9 +864,8 @@ public class payments_contents {
         table.getChildren().add(buildHeaderRow(tableW, dataW));
 
         if (rows.isEmpty()) {
-            String msg = currentTab.equals("archived")
-                ? "No archived payments."
-                : "No payments found.";
+            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
+                       : currentTab.equals("archived") ? "No archived payments." : "No payments found.";
             Label empty = new Label(msg);
             empty.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -934,6 +1023,9 @@ public class payments_contents {
         return div;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  STYLE HELPERS
+    // ══════════════════════════════════════════════════════
     private String pillStyle(boolean active) {
         return active
             ? "-fx-background-color: " + ACCENT + ";" +
@@ -968,12 +1060,17 @@ public class payments_contents {
                "-fx-cursor: hand;";
     }
 
+    // ── Labeled green button — matches addSupplierBtn style ──
     private String analyticsBtnStyle(boolean hovered) {
         return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";" +
                "-fx-background-radius: 8;" +
                "-fx-border-color: #155724;" +
                "-fx-border-radius: 8;" +
                "-fx-border-width: 1.5;" +
+               "-fx-font-family: '" + FONT_FAMILY + "';" +
+               "-fx-font-size: 13px;" +
+               "-fx-font-weight: bold;" +
+               "-fx-text-fill: #155724;" +
                "-fx-cursor: hand;";
     }
 

@@ -5,6 +5,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
@@ -78,19 +79,31 @@ public class customers_contents {
 
     private String         currentTab  = "active";
     private boolean        archiveMode = false;
+    private String         searchQuery = "";
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
+    // rows: [customerId, customerName, latestOrderId, loyaltyPts]
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
-    private Label activeTabBtn;
-    private Label archivedTabBtn;
-    private Label archiveBtn;
-    private Label archiveAllBtn;
-    private Label confirmBtn;
-    private Label deleteBtn;
-    private Label exportCsvBtn;
+    private Label     activeTabBtn;
+    private Label     archivedTabBtn;
+    private Label     archiveBtn;
+    private Label     archiveAllBtn;
+    private Label     confirmBtn;
+    private Label     deleteBtn;
+    private Label     exportCsvBtn;
+    private TextField searchField;
+    private HBox      searchBar;
+
+    // ── Layout values needed for repositioning ────────────
+    private double btnY;
+    private double gap;
+    private double searchW;
+    private double activeTabX;
+    private double archAllX;
+    private double confirmX;
 
     private static boolean fontsLoaded = false;
 
@@ -111,6 +124,16 @@ public class customers_contents {
         this.totalH = totalH;
         this.conn   = conn;
         loadFonts();
+    }
+
+    // ── Reposition search bar depending on archiveMode ────
+    // When archiveMode is ON:  right edge clamps to left of archiveAll button
+    // When archiveMode is OFF: right edge clamps to left of activeTab button
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
+        double newX = rightEdge - searchW;
+        searchBar.setLayoutX(newX);
     }
 
     // ══════════════════════════════════════════════════════
@@ -189,6 +212,19 @@ public class customers_contents {
         return rows;
     }
 
+    // ── Filtered rows based on current searchQuery ────────
+    // Searches by customer name (index 1) or order ID (index 2)
+    private List<String[]> getFilteredRows() {
+        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
+        String q = searchQuery.trim().toLowerCase();
+        List<String[]> filtered = new ArrayList<>();
+        for (String[] row : cachedRows) {
+            if (row[1].toLowerCase().contains(q) || row[2].toLowerCase().contains(q))
+                filtered.add(row);
+        }
+        return filtered;
+    }
+
     // ══════════════════════════════════════════════════════
     //  DB OPERATIONS
     // ══════════════════════════════════════════════════════
@@ -240,7 +276,8 @@ public class customers_contents {
     //  CSV EXPORT
     // ══════════════════════════════════════════════════════
     private void exportCsv() {
-        if (cachedRows.isEmpty()) return;
+        List<String[]> rows = getFilteredRows();
+        if (rows.isEmpty()) return;
 
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Save Customer List as CSV");
@@ -258,7 +295,7 @@ public class customers_contents {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
             writer.write("Customer ID,Customer Name,Order ID,Loyalty Pts");
             writer.newLine();
-            for (String[] row : cachedRows) {
+            for (String[] row : rows) {
                 writer.write(
                     escapeCsv(row[0]) + "," +
                     escapeCsv(row[1]) + "," +
@@ -290,14 +327,15 @@ public class customers_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH     = 36;
-        double btnY     = TOP_PADDING + 10;
-        double iconW    = 36;
-        double gap      = 8;
-        double tabW     = 90;
+        double btnH    = 36;
+        btnY           = TOP_PADDING + 10;
+        double iconW   = 36;
+        gap            = 8;
+        double tabW    = 90;
         double archAllW = 100;
         double confirmW = 90;
-        double csvW     = 120;
+        double csvW    = 120;
+        searchW        = 200;
 
         Label title = new Label("Customer List");
         title.setStyle(
@@ -327,13 +365,20 @@ public class customers_contents {
         titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
+        // ── Right-side button layout (right → left) ───────
+        // delete | gap | exportCsv | gap | archivedTab | gap | activeTab | gap | confirm | gap | archiveAll | gap | search
         double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX - gap - csvW;
-        double archivedTabX = exportCsvX - gap - tabW;
-        double activeTabX   = archivedTabX - gap - tabW;
-        double confirmX     = activeTabX - gap - confirmW;
-        double archAllX     = confirmX - gap - archAllW;
+        double exportCsvX   = deleteX      - gap - csvW;
+        double archivedTabX = exportCsvX   - gap - tabW;
+        activeTabX          = archivedTabX - gap - tabW;
+        confirmX            = activeTabX   - gap - confirmW;
+        archAllX            = confirmX     - gap - archAllW;
 
+        // Initial search bar position (archive mode OFF → clamp to left of activeTab)
+        double searchRightEdge = activeTabX - gap;
+        double searchX         = searchRightEdge - searchW;
+
+        // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -361,6 +406,7 @@ public class customers_contents {
             ))
         );
 
+        // ── Export CSV button ─────────────────────────────
         exportCsvBtn = new Label("Export CSV");
         FontIcon csvIcon = new FontIcon(FontAwesomeSolid.FILE_DOWNLOAD);
         csvIcon.setIconSize(13);
@@ -378,6 +424,7 @@ public class customers_contents {
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
         exportCsvBtn.setOnMouseClicked(e -> exportCsv());
 
+        // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
         activeTabBtn.setLayoutX(activeTabX);
         activeTabBtn.setLayoutY(btnY);
@@ -398,6 +445,7 @@ public class customers_contents {
         archivedTabBtn.setOnMouseExited(e -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
+        // ── Archive All button ────────────────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW);
@@ -415,6 +463,7 @@ public class customers_contents {
             rebuildTable();
         });
 
+        // ── Confirm button ────────────────────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW);
@@ -436,10 +485,49 @@ public class customers_contents {
             archiveAllBtn.setVisible(false);
             confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
+            repositionSearchBar();
             cachedRows = fetchCustomers(currentTab);
             rebuildTable();
         });
 
+        // ── Search bar ────────────────────────────────────
+        FontIcon searchIcon = new FontIcon(FontAwesomeSolid.SEARCH);
+        searchIcon.setIconSize(14);
+        searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        searchField = new TextField();
+        searchField.setPromptText("Search name or order ID...");
+        searchField.setStyle(
+            "-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;"
+        );
+        searchField.setPrefWidth(searchW - 42);
+
+        searchBar = new HBox(6, searchIcon, searchField);
+        searchBar.setAlignment(Pos.CENTER_LEFT);
+        searchBar.setPadding(new Insets(0, 10, 0, 12));
+        searchBar.setPrefWidth(searchW);
+        searchBar.setPrefHeight(btnH);
+        searchBar.setLayoutX(searchX);
+        searchBar.setLayoutY(btnY);
+        searchBar.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 20;"
+        );
+
+        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
+            searchQuery = newVal == null ? "" : newVal.trim();
+            rebuildTable();
+        });
+
+        // ── Table ─────────────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
@@ -448,7 +536,7 @@ public class customers_contents {
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
-            titleRow, archiveAllBtn, confirmBtn,
+            titleRow, searchBar, archiveAllBtn, confirmBtn,
             activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
         );
         stackRoot.getChildren().add(root);
@@ -466,6 +554,7 @@ public class customers_contents {
         archiveAllBtn.setVisible(archiveMode);
         confirmBtn.setVisible(archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
+        repositionSearchBar();
         rebuildTable();
     }
 
@@ -486,6 +575,8 @@ public class customers_contents {
         currentTab  = tab;
         archiveMode = false;
         selectedIds.clear();
+        searchQuery = "";
+        if (searchField != null) searchField.clear();
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
         archiveAllBtn.setVisible(false);
@@ -493,6 +584,7 @@ public class customers_contents {
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
+        repositionSearchBar();
         cachedRows = fetchCustomers(tab);
         rebuildTable();
     }
@@ -508,26 +600,19 @@ public class customers_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  CONFIRMATION MODAL — fixed size
+    //  CONFIRMATION MODAL
     // ══════════════════════════════════════════════════════
     private Pane buildConfirmModal(String context, String subMessage, Runnable onConfirm) {
         Pane overlay = new Pane();
-        overlay.setPrefWidth(totalW);
-        overlay.setPrefHeight(totalH);
-        overlay.setMinWidth(totalW);
-        overlay.setMinHeight(totalH);
-        overlay.setMaxWidth(totalW);
-        overlay.setMaxHeight(totalH);
+        overlay.setPrefWidth(totalW); overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);  overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);  overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(MODAL_W);
-        card.setMinWidth(MODAL_W);
-        card.setMaxWidth(MODAL_W);
-        card.setPrefHeight(MODAL_H);
-        card.setMinHeight(MODAL_H);
-        card.setMaxHeight(MODAL_H);
+        card.setPrefWidth(MODAL_W); card.setMinWidth(MODAL_W); card.setMaxWidth(MODAL_W);
+        card.setPrefHeight(MODAL_H); card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
         card.setStyle(
             "-fx-background-color: white;" +
@@ -566,8 +651,7 @@ public class customers_contents {
 
         Label noBtn = new Label("No, cancel");
         noBtn.setCursor(javafx.scene.Cursor.HAND);
-        noBtn.setPrefWidth(140);
-        noBtn.setPrefHeight(38);
+        noBtn.setPrefWidth(140); noBtn.setPrefHeight(38);
         noBtn.setAlignment(Pos.CENTER);
         noBtn.setStyle(modalNoBtnStyle(false));
         noBtn.setOnMouseEntered(e -> noBtn.setStyle(modalNoBtnStyle(true)));
@@ -576,8 +660,7 @@ public class customers_contents {
 
         Label yesBtn = new Label("Yes, delete");
         yesBtn.setCursor(javafx.scene.Cursor.HAND);
-        yesBtn.setPrefWidth(140);
-        yesBtn.setPrefHeight(38);
+        yesBtn.setPrefWidth(140); yesBtn.setPrefHeight(38);
         yesBtn.setAlignment(Pos.CENTER);
         yesBtn.setStyle(modalYesBtnStyle(false));
         yesBtn.setOnMouseEntered(e -> yesBtn.setStyle(modalYesBtnStyle(true)));
@@ -592,12 +675,9 @@ public class customers_contents {
         card.getChildren().addAll(warnIcon, heading, sub, btnRow);
 
         StackPane centred = new StackPane(card);
-        centred.setPrefWidth(totalW);
-        centred.setPrefHeight(totalH);
-        centred.setMinWidth(totalW);
-        centred.setMinHeight(totalH);
-        centred.setMaxWidth(totalW);
-        centred.setMaxHeight(totalH);
+        centred.setPrefWidth(totalW); centred.setPrefHeight(totalH);
+        centred.setMinWidth(totalW);  centred.setMinHeight(totalH);
+        centred.setMaxWidth(totalW);  centred.setMaxHeight(totalH);
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);
         return overlay;
@@ -616,7 +696,7 @@ public class customers_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, cachedRows);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -653,7 +733,8 @@ public class customers_contents {
         table.getChildren().add(buildHeaderRow(tableW, dataW));
 
         if (rows.isEmpty()) {
-            String msg = currentTab.equals("archived") ? "No archived customers." : "No customers found.";
+            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
+                       : currentTab.equals("archived") ? "No archived customers." : "No customers found.";
             Label empty = new Label(msg);
             empty.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -741,9 +822,9 @@ public class customers_contents {
         row.getChildren().addAll(
             buildTextCell(custId,   dataW * COL_CUST_ID,   true),
             buildColDivider(),
-            buildTextCell(custName, dataW * COL_CUST_NAME,  false),
+            buildTextCell(custName, dataW * COL_CUST_NAME, false),
             buildColDivider(),
-            buildTextCell(orderId,  dataW * COL_ORDER_ID,   false),
+            buildTextCell(orderId,  dataW * COL_ORDER_ID,  false),
             buildColDivider(),
             buildLoyaltyCell(loyaltyPts, dataW * COL_LOYALTY)
         );
@@ -835,6 +916,9 @@ public class customers_contents {
         return div;
     }
 
+    // ══════════════════════════════════════════════════════
+    //  STYLE HELPERS
+    // ══════════════════════════════════════════════════════
     private String tabBtnStyle(boolean selected) {
         return selected
             ? "-fx-background-color: " + ACCENT + ";" +

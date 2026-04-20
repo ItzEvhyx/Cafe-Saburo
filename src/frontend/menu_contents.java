@@ -618,75 +618,122 @@ public class menu_contents {
         refreshOrderList();
     }
 
-    // ══════════════════════════════════════════════════════
-    //  INSUFFICIENT PAYMENT MODAL
-    // ══════════════════════════════════════════════════════
-    private void showInsufficientModal(double paid, double total, double needed) {
-        Pane overlay = new Pane();
-        overlay.setPrefWidth(totalW);
-        overlay.setPrefHeight(totalH);
-        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.50);");
+ 
+//  INSUFFICIENT PAYMENT MODAL
+// ══════════════════════════════════════════════════════
+private static final double MODAL_W = 440;
+private static final double MODAL_H = 310;
 
-        FontIcon warnIcon = new FontIcon(FontAwesomeSolid.EXCLAMATION_CIRCLE);
-        warnIcon.setIconSize(36);
-        warnIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+private void showInsufficientModal(double paid, double total, double needed) {
+    Pane overlay = new Pane();
+    overlay.setPrefWidth(totalW);  overlay.setMinWidth(totalW);  overlay.setMaxWidth(totalW);
+    overlay.setPrefHeight(totalH); overlay.setMinHeight(totalH); overlay.setMaxHeight(totalH);
+    overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
-        Label heading = new Label("Insufficient Amount!");
-        heading.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 20px;" +
-            "-fx-font-weight: 800;" +
-            "-fx-text-fill: " + ACCENT + ";"
-        );
+    VBox card = new VBox(0);
+    card.setAlignment(Pos.TOP_LEFT);
+    card.setMinWidth(MODAL_W);  card.setMaxWidth(MODAL_W);  card.setPrefWidth(MODAL_W);
+    card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H); card.setPrefHeight(MODAL_H);
+    card.setStyle(
+        "-fx-background-color: white;" +
+        "-fx-background-radius: 14;" +
+        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
+    );
 
-        Label detailPaid  = styledDetailLabel(String.format("Amount Paid:   ₱%.2f", paid));
-        Label detailTotal = styledDetailLabel(String.format("Order Total:     ₱%.2f", total));
+    // ── Modal header ──────────────────────────────────
+    HBox cardHeader = new HBox(10);
+    cardHeader.setPadding(new Insets(20, 24, 16, 24));
+    cardHeader.setAlignment(Pos.CENTER_LEFT);
+    cardHeader.setStyle(
+        "-fx-background-color: #F5E8EA;" +
+        "-fx-background-radius: 14 14 0 0;" +
+        "-fx-border-color: transparent transparent #882F39 transparent;" +
+        "-fx-border-width: 0 0 1.5 0;"
+    );
 
-        Region sep = new Region();
-        sep.setPrefHeight(1.5);
-        sep.setMaxWidth(320);
-        sep.setStyle("-fx-background-color: rgba(136,47,57,0.25);");
-        VBox.setMargin(sep, new Insets(4, 0, 4, 0));
+    FontIcon warnIcon = new FontIcon(FontAwesomeSolid.EXCLAMATION_CIRCLE);
+    warnIcon.setIconSize(17);
+    warnIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
 
-        Label detailNeeded = new Label(String.format("Please pay  ₱%.2f  more to submit.", needed));
-        detailNeeded.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 14px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: #721C24;" +
-            "-fx-text-alignment: center;"
-        );
-        detailNeeded.setAlignment(Pos.CENTER);
-        detailNeeded.setWrapText(true);
+    Label heading = new Label("Insufficient Amount!");
+    heading.setStyle(
+        "-fx-font-family: '" + FONT_FAMILY + "';" +
+        "-fx-font-size: 20px;" +
+        "-fx-font-weight: 800;" +
+        "-fx-text-fill: " + ACCENT + ";"
+    );
 
-        Label okBtn = new Label("OK, I'll update the amount");
-        okBtn.setCursor(javafx.scene.Cursor.HAND);
-        okBtn.setPrefWidth(220);
-        okBtn.setPrefHeight(40);
-        okBtn.setAlignment(Pos.CENTER);
-        okBtn.setStyle(modalOkBtnStyle(false));
-        okBtn.setOnMouseEntered(e -> okBtn.setStyle(modalOkBtnStyle(true)));
-        okBtn.setOnMouseExited(e  -> okBtn.setStyle(modalOkBtnStyle(false)));
-        okBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+    Region hSpacer = new Region();
+    HBox.setHgrow(hSpacer, Priority.ALWAYS);
 
-        VBox card = new VBox(14);
-        card.setAlignment(Pos.CENTER);
-        card.setPadding(new Insets(36, 44, 32, 44));
-        card.setMaxWidth(400);
-        card.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 16;" +
-            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.25), 28, 0, 0, 6);"
-        );
-        card.getChildren().addAll(warnIcon, heading, detailPaid, detailTotal, sep, detailNeeded, okBtn);
+    Label closeBtn = new Label();
+    FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
+    xIcon.setIconSize(13);
+    xIcon.setIconColor(javafx.scene.paint.Color.web("#555555"));
+    closeBtn.setGraphic(xIcon);
+    closeBtn.setCursor(javafx.scene.Cursor.HAND);
+    closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
+    closeBtn.setAlignment(Pos.CENTER);
+    closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;");
+    closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6; -fx-background-radius: 6;"));
+    closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;"));
+    closeBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
 
-        StackPane centred = new StackPane(card);
-        centred.setPrefWidth(totalW);
-        centred.setPrefHeight(totalH);
-        centred.setAlignment(Pos.CENTER);
-        overlay.getChildren().add(centred);
-        rootStack.getChildren().add(overlay);
-    }
+    cardHeader.getChildren().addAll(warnIcon, heading, hSpacer, closeBtn);
+
+    // ── Body ──────────────────────────────────────────
+    VBox body = new VBox(10);
+    body.setPadding(new Insets(26, 40, 10, 40));
+    body.setAlignment(Pos.CENTER);
+    VBox.setVgrow(body, Priority.ALWAYS);
+
+    Label detailPaid  = styledDetailLabel(String.format("Amount Paid:   ₱%.2f", paid));
+    Label detailTotal = styledDetailLabel(String.format("Order Total:     ₱%.2f", total));
+
+    Region sep = new Region();
+    sep.setPrefHeight(1.5);
+    sep.setMaxWidth(Double.MAX_VALUE);
+    sep.setStyle("-fx-background-color: rgba(136,47,57,0.25);");
+    VBox.setMargin(sep, new Insets(4, 0, 4, 0));
+
+    Label detailNeeded = new Label(String.format("Please pay  ₱%.2f  more to submit.", needed));
+    detailNeeded.setStyle(
+        "-fx-font-family: '" + FONT_FAMILY + "';" +
+        "-fx-font-size: 14px;" +
+        "-fx-font-weight: bold;" +
+        "-fx-text-fill: #721C24;" +
+        "-fx-text-alignment: center;"
+    );
+    detailNeeded.setAlignment(Pos.CENTER);
+    detailNeeded.setWrapText(true);
+
+    body.getChildren().addAll(detailPaid, detailTotal, sep, detailNeeded);
+
+    // ── Footer ────────────────────────────────────────
+    HBox footer = new HBox();
+    footer.setAlignment(Pos.CENTER_RIGHT);
+    footer.setPadding(new Insets(18, 28, 24, 28));
+
+    Label okBtn = new Label("OK, I'll update the amount");
+    okBtn.setCursor(javafx.scene.Cursor.HAND);
+    okBtn.setPrefWidth(200);
+    okBtn.setPrefHeight(38);
+    okBtn.setAlignment(Pos.CENTER);
+    okBtn.setStyle(modalOkBtnStyle(false));
+    okBtn.setOnMouseEntered(e -> okBtn.setStyle(modalOkBtnStyle(true)));
+    okBtn.setOnMouseExited(e  -> okBtn.setStyle(modalOkBtnStyle(false)));
+    okBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+
+    footer.getChildren().add(okBtn);
+    card.getChildren().addAll(cardHeader, body, footer);
+
+    StackPane centred = new StackPane(card);
+    centred.setPrefWidth(totalW);  centred.setMinWidth(totalW);  centred.setMaxWidth(totalW);
+    centred.setPrefHeight(totalH); centred.setMinHeight(totalH); centred.setMaxHeight(totalH);
+    centred.setAlignment(Pos.CENTER);
+    overlay.getChildren().add(centred);
+    rootStack.getChildren().add(overlay);
+}
 
     private Label styledDetailLabel(String text) {
         Label lbl = new Label(text);

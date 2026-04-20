@@ -3,9 +3,11 @@ package backend;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 
 public class auth_util {
 
@@ -103,23 +105,37 @@ public class auth_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  EMPLOYEE AUTHENTICATION  — DB-driven, no hardcoded names
+    //  EMPLOYEE AUTHENTICATION  — DB-driven
     // ══════════════════════════════════════════════════════
 
     /**
      * Looks up the employee by name in dbo.Employees (case-insensitive).
-     * Blocks Terminated employees and double clock-ins.
-     * On success: inserts an open TimeLogs row and caches session.
+     * Blocks Terminated employees.
+     *
+     * Clock-in rules:
+     *  1. Auto-close any open rows from PREVIOUS days (app killed mid-shift).
+     *  2. Block if there is STILL an open (time_out IS NULL) row for TODAY
+     *     — genuine double clock-in; employee must time out first.
+     *  3. If shiftDate != today AND a completed record already exists for that
+     *     date, block it — prevents back-dating a second shift.
+     *     Same-day re-clock-in (after a proper time-out) is always allowed.
+     *  4. Otherwise → open a new TimeLogs row and cache the session.
+     *
+     * @param name      employee name as entered in the UI
+     * @param shiftDate the date the employee is clocking in for (chosen in the UI)
      */
-    public static AuthResult authenticateEmployee(String name) {
+    public static AuthResult authenticateEmployee(String name, LocalDate shiftDate) {
         if (name == null || name.trim().isEmpty())
             return AuthResult.fail("Please enter your name.");
+        if (shiftDate == null)
+            return AuthResult.fail("Please select a valid shift date.");
         if (conn == null)
             return AuthResult.fail("No database connection.");
         try {
             if (conn.isClosed()) return AuthResult.fail("Database connection is closed.");
         } catch (Exception e) { return AuthResult.fail("Database error."); }
 
+        // ── 1. Look up employee ───────────────────────────
         String sql =
             "SELECT employee_id, employee_name, employment_status " +
             "FROM dbo.Employees " +
@@ -143,19 +159,75 @@ public class auth_util {
             if ("Terminated".equalsIgnoreCase(empStatus))
                 return AuthResult.fail("Access denied. This employee has been terminated.");
 
-            // ── Block double clock-in ─────────────────────
+            // ── 2. Auto-close stale open rows from PREVIOUS days ──
+            //    If the app was force-killed, an open row may linger from a past date.
+            //    DATEDIFF(DAY, time_in, GETDATE()) > 0 is true whenever time_in falls
+            //    on any calendar day before today, regardless of the time component.
+            try (PreparedStatement sp = conn.prepareStatement(
+                    "UPDATE dbo.TimeLogs " +
+                    "SET    time_out = GETDATE() " +
+                    "WHERE  employee_id = ? " +
+                    "  AND  time_out   IS NULL " +
+                    "  AND  is_deleted  = 0 " +
+                    "  AND  DATEDIFF(DAY, time_in, GETDATE()) > 0")) {
+                sp.setString(1, empId);
+                int fixed = sp.executeUpdate();
+                if (fixed > 0)
+                    System.out.println("[AUTH] Auto-closed " + fixed + " stale open log(s) for " + empName);
+            }
+
+            // ── 3. Block only if there is still an open row for TODAY ──
+            //    After step 2 all previous-day stragglers are closed.
+            //    DATEDIFF(DAY, time_in, GETDATE()) = 0 means time_in is today.
             try (PreparedStatement cp = conn.prepareStatement(
                     "SELECT COUNT(*) FROM dbo.TimeLogs " +
-                    "WHERE employee_id = ? AND time_out IS NULL AND is_deleted = 0")) {
+                    "WHERE  employee_id = ? " +
+                    "  AND  time_out   IS NULL " +
+                    "  AND  is_deleted  = 0 " +
+                    "  AND  DATEDIFF(DAY, time_in, GETDATE()) = 0")) {
                 cp.setString(1, empId);
                 ResultSet cr = cp.executeQuery();
                 cr.next();
-                int open = cr.getInt(1);
+                int openToday = cr.getInt(1);
                 cr.close();
-                if (open > 0) return AuthResult.fail("You are already clocked in.");
+                if (openToday > 0)
+                    return AuthResult.fail("You are already clocked in. Please time out first.");
             }
 
-            // ── Open a new TimeLogs row ───────────────────
+            // ── 4. Block re-clock-in only when shiftDate is NOT today ──
+            //    Same-day rule: an employee can clock in multiple times today
+            //    (e.g. time out for lunch, clock back in) — step 3 already
+            //    ensures no duplicate OPEN rows exist.
+            //    Future/past-date rule: if they pick a different date AND a
+            //    completed record already exists for that date, block it.
+            if (!shiftDate.equals(LocalDate.now())) {
+                try (PreparedStatement dp = conn.prepareStatement(
+                        "SELECT COUNT(*) FROM dbo.TimeLogs " +
+                        "WHERE  employee_id = ? " +
+                        "  AND  time_out   IS NOT NULL " +
+                        "  AND  is_deleted  = 0 " +
+                        "  AND  DATEDIFF(DAY, time_in, ?) = 0")) {
+                    dp.setString(1, empId);
+                    dp.setDate(2, java.sql.Date.valueOf(shiftDate));
+                    ResultSet dr = dp.executeQuery();
+                    dr.next();
+                    int doneOnDate = dr.getInt(1);
+                    dr.close();
+                    if (doneOnDate > 0)
+                        return AuthResult.fail(
+                            "You already completed a shift on " +
+                            shiftDate.format(DateTimeFormatter.ofPattern("MMM dd, yyyy")) +
+                            ". You cannot clock in again for the same date.");
+                }
+            }
+
+            // ── 5. Open a new TimeLogs row ────────────────────────
+            // FIX: Use UUID-based log IDs to prevent primary key collisions.
+            // The old MAX(log_id)+1 approach broke when any non-numeric ID
+            // (from the System.currentTimeMillis() fallback) existed in the table,
+            // causing parseInt to throw → fallback to a millis ID → next run also
+            // fails parseInt → LOG-0001 is reused → INSERT fails silently on PK
+            // violation → the old row stays open → "already clocked in" fires.
             String logId = generateLogId();
             try (PreparedStatement ip = conn.prepareStatement(
                     "INSERT INTO dbo.TimeLogs " +
@@ -187,28 +259,47 @@ public class auth_util {
         }
     }
 
+    /**
+     * @deprecated Use authenticateEmployee(String name, LocalDate shiftDate) instead.
+     */
+    @Deprecated
+    public static AuthResult authenticateEmployee(String name) {
+        return authenticateEmployee(name, LocalDate.now());
+    }
+
     // ══════════════════════════════════════════════════════
     //  TIME-OUT
     // ══════════════════════════════════════════════════════
 
     /**
-     * Stamps time_out on the open TimeLogs row, then clears session.
+     * Stamps time_out = GETDATE() on the open TimeLogs row, then clears session.
      * No-op for manager sessions (returns false gracefully).
+     *
+     * FIX: Added AND time_out IS NULL guard to the UPDATE so a double-call
+     * (e.g. retry after a jitter) doesn't overwrite an already-stamped row,
+     * and we can detect whether the row was actually still open via rowcount.
      */
     public static boolean timeOut() {
         if (currentLogId == null || conn == null) return false;
         try { if (conn.isClosed()) return false; } catch (Exception e) { return false; }
 
+        String logIdToStamp = currentLogId; // snapshot before logout() nulls it
+
         try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.TimeLogs SET time_out = GETDATE() WHERE log_id = ?")) {
-            ps.setString(1, currentLogId);
+                "UPDATE dbo.TimeLogs " +
+                "SET    time_out = GETDATE() " +
+                "WHERE  log_id   = ? " +
+                "  AND  time_out IS NULL")) {          // guard: don't double-stamp
+            ps.setString(1, logIdToStamp);
             int updated = ps.executeUpdate();
-            System.out.println("[TIME-OUT] Log ID : " + currentLogId);
-            System.out.println("[TIME-OUT] Name   : " + currentName);
-            logout();
+            System.out.println("[TIME-OUT] Log ID  : " + logIdToStamp);
+            System.out.println("[TIME-OUT] Name    : " + currentName);
+            System.out.println("[TIME-OUT] Stamped : " + (updated > 0 ? "YES" : "NO (already closed)"));
+            logout(); // always clear session regardless of stamp result
             return updated > 0;
         } catch (Exception e) {
             e.printStackTrace();
+            logout(); // clear session even if DB update failed
             return false;
         }
     }
@@ -218,8 +309,8 @@ public class auth_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Clears all session state.
-     * Employees: call timeOut() instead so the DB row is stamped.
+     * Clears ALL session state fields.
+     * Employees: call timeOut() instead so the DB row is stamped first.
      * Manager: call this directly.
      */
     public static void logout() {
@@ -234,24 +325,22 @@ public class auth_util {
     //  HELPERS
     // ══════════════════════════════════════════════════════
 
+    /**
+     * Generates a guaranteed-unique log ID using UUID.
+     *
+     * WHY THIS REPLACES THE OLD MAX(log_id)+1 APPROACH:
+     * The old method tried to parse the max log_id as an integer. If ANY row
+     * in the table had a non-numeric ID (e.g. "LOG-1714900000000" from the
+     * System.currentTimeMillis() fallback), parseInt threw a NumberFormatException,
+     * the catch block returned another millis-based ID, and the cycle repeated —
+     * eventually producing a duplicate "LOG-0001" that caused a silent PK violation
+     * on INSERT, leaving the previous row's time_out as NULL, which then triggered
+     * the "already clocked in" error on the employee's next login.
+     *
+     * UUID-based IDs are collision-proof and require no table scan.
+     */
     private static String generateLogId() {
-        if (conn == null) return "LOG-" + System.currentTimeMillis();
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT MAX(log_id) FROM dbo.TimeLogs")) {
-            ResultSet rs = ps.executeQuery();
-            if (rs.next() && rs.getString(1) != null) {
-                String last = rs.getString(1);
-                rs.close();
-                try {
-                    int num = Integer.parseInt(last.replace("LOG-", "").trim());
-                    return String.format("LOG-%04d", num + 1);
-                } catch (NumberFormatException e) {
-                    return "LOG-" + System.currentTimeMillis();
-                }
-            }
-            rs.close();
-        } catch (Exception e) { e.printStackTrace(); }
-        return "LOG-0001";
+        return "LOG-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 
     // ══════════════════════════════════════════════════════

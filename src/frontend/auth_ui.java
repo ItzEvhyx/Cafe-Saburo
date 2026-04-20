@@ -99,6 +99,9 @@ public class auth_ui {
         VBox.setMargin(shiftDateLabel, new Insets(4, 0, 0, 2));
 
         // ── Month dropdown ────────────────────────────────
+        // Only show months from today onward (current month + up to 2 future months
+        // is reasonable for scheduling; we keep the full list but disable past days
+        // via the day/year constraint logic below).
         ComboBox<String> monthBox = new ComboBox<>();
         monthBox.getItems().addAll(
             "January", "February", "March", "April", "May", "June",
@@ -119,9 +122,9 @@ public class auth_ui {
         // ── Year dropdown ─────────────────────────────────
         ComboBox<Integer> yearBox = new ComboBox<>();
         int currentYear = LocalDate.now().getYear();
-        for (int y = currentYear; y >= currentYear - 5; y--) {
-            yearBox.getItems().add(y);
-        }
+        // Only current year and next year — past years make no sense for clocking in
+        yearBox.getItems().add(currentYear);
+        yearBox.getItems().add(currentYear + 1);
         yearBox.setPromptText("Year");
         styleComboBox(yearBox);
         yearBox.setMaxWidth(Double.MAX_VALUE);
@@ -131,19 +134,19 @@ public class auth_ui {
         LocalDate today = LocalDate.now();
         monthBox.getSelectionModel().select(today.getMonthValue() - 1);
         yearBox.getSelectionModel().select(Integer.valueOf(today.getYear()));
-        populateDays(dayBox, today.getMonthValue(), today.getYear());
+        populateDaysFromToday(dayBox, today.getMonthValue(), today.getYear());
         dayBox.getSelectionModel().select(Integer.valueOf(today.getDayOfMonth()));
 
         // ── Re-populate days when month/year changes ──────
         monthBox.setOnAction(e -> {
             int selMonth = monthBox.getSelectionModel().getSelectedIndex() + 1;
             Integer selYear = yearBox.getValue();
-            if (selYear != null) populateDays(dayBox, selMonth, selYear);
+            if (selYear != null) populateDaysFromToday(dayBox, selMonth, selYear);
         });
         yearBox.setOnAction(e -> {
             int selMonth = monthBox.getSelectionModel().getSelectedIndex() + 1;
             Integer selYear = yearBox.getValue();
-            if (selYear != null) populateDays(dayBox, selMonth, selYear);
+            if (selYear != null) populateDaysFromToday(dayBox, selMonth, selYear);
         });
 
         HBox dateRow = new HBox(8, monthBox, dayBox, yearBox);
@@ -272,7 +275,7 @@ public class auth_ui {
         overlayBackdrop.setVisible(false);
         overlayBackdrop.setMouseTransparent(false);
 
-        // Modal card — fixed width + height, thick white border
+        // Modal card
         VBox modalCard = new VBox(20);
         modalCard.setAlignment(Pos.CENTER);
         modalCard.setPadding(new Insets(48, 64, 48, 64));
@@ -340,12 +343,28 @@ public class auth_ui {
             String selMonth = monthBox.getValue();
             Integer selDay  = dayBox.getValue();
             Integer selYear = yearBox.getValue();
+
             if (selMonth == null || selDay == null || selYear == null) {
                 empError.setText("Please select a complete shift date.");
                 empError.setVisible(true);
                 return;
             }
-            auth_util.AuthResult result = auth_util.authenticateEmployee(empNameField.getText());
+
+            // Build the LocalDate from the picker selections
+            int monthIdx = monthBox.getSelectionModel().getSelectedIndex() + 1; // 1-based
+            LocalDate shiftDate = LocalDate.of(selYear, monthIdx, selDay);
+
+            // Sanity: date must not be in the past (UI should prevent this,
+            // but guard here too in case of edge cases)
+            if (shiftDate.isBefore(LocalDate.now())) {
+                empError.setText("Shift date cannot be in the past.");
+                empError.setVisible(true);
+                return;
+            }
+
+            auth_util.AuthResult result = auth_util.authenticateEmployee(
+                    empNameField.getText(), shiftDate);
+
             if (result.success) {
                 empError.setVisible(false);
                 openPosWindow(stage);
@@ -382,14 +401,39 @@ public class auth_ui {
     }
 
     // ══════════════════════════════════════════════════════
-    //  DAY POPULATOR
+    //  DAY POPULATOR — only today and future days
     // ══════════════════════════════════════════════════════
-    private void populateDays(ComboBox<Integer> dayBox, int month, int year) {
+
+    /**
+     * Populates dayBox with valid days for the given month/year.
+     * Past days are excluded (only today and future).
+     * If the selected month/year is in the future, all days are shown.
+     */
+    private void populateDaysFromToday(ComboBox<Integer> dayBox, int month, int year) {
         Integer prev = dayBox.getValue();
         int daysInMonth = YearMonth.of(year, month).lengthOfMonth();
+
+        LocalDate today = LocalDate.now();
+        // First valid day: if month/year == today's month/year → today's day; otherwise 1
+        int firstDay = 1;
+        if (year == today.getYear() && month == today.getMonthValue()) {
+            firstDay = today.getDayOfMonth();
+        } else if (year < today.getYear() ||
+                   (year == today.getYear() && month < today.getMonthValue())) {
+            // This is a past month — no valid days to show.
+            // Clear and return; the UI month/year pickers shouldn't allow this,
+            // but we handle it defensively.
+            dayBox.getItems().clear();
+            return;
+        }
+
         dayBox.getItems().clear();
-        for (int d = 1; d <= daysInMonth; d++) dayBox.getItems().add(d);
-        if (prev != null && prev <= daysInMonth) {
+        for (int d = firstDay; d <= daysInMonth; d++) {
+            dayBox.getItems().add(d);
+        }
+
+        // Re-select previously chosen day if still valid
+        if (prev != null && prev >= firstDay && prev <= daysInMonth) {
             dayBox.getSelectionModel().select(prev);
         } else {
             dayBox.getSelectionModel().selectFirst();

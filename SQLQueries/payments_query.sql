@@ -175,7 +175,7 @@ GO
 -- UPDATE dbo.Payments SET status = 'archived'
 -- WHERE is_deleted = 0
 --   AND order_id IN (
---       SELECT order_id FROM dbo.Orders
+--       SELECT order_id FROM dbo.Orders 
 --       WHERE order_status = 'Completed' AND is_deleted = 0
 --   );
 

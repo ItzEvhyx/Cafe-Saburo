@@ -1,5 +1,8 @@
 package frontend;
 
+import backend.inventory_util;
+import backend.suppliers_util;
+
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
@@ -12,18 +15,11 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -110,25 +106,11 @@ public class suppliers_contents {
     private double confirmX;
     private double archAllX;
 
-    private static boolean fontsLoaded = false;
-
-    private static void loadFonts() {
-        if (fontsLoaded) return;
-        String[] variants = {
-            "Aleo-Black","Aleo-BlackItalic","Aleo-Bold","Aleo-BoldItalic",
-            "Aleo-ExtraBold","Aleo-ExtraBoldItalic","Aleo-ExtraLight","Aleo-ExtraLightItalic",
-            "Aleo-Italic","Aleo-Light","Aleo-LightItalic","Aleo-Medium","Aleo-MediumItalic",
-            "Aleo-Regular","Aleo-SemiBold","Aleo-SemiBoldItalic","Aleo-Thin","Aleo-ThinItalic"
-        };
-        for (String v : variants) Font.loadFont("file:assets/fonts/" + v + ".ttf", 12);
-        fontsLoaded = true;
-    }
-
     public suppliers_contents(double totalW, double totalH, Connection conn) {
         this.totalW = totalW;
         this.totalH = totalH;
         this.conn   = conn;
-        loadFonts();
+        inventory_util.loadFonts();
     }
 
     // ══════════════════════════════════════════════════════
@@ -147,170 +129,6 @@ public class suppliers_contents {
             cachedRows.add(0, newRow);
             rebuildTable();
         }
-    }
-
-    // ── Filtered rows ─────────────────────────────────────
-    private List<String[]> getFilteredRows() {
-        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
-        String q = searchQuery.trim().toLowerCase();
-        List<String[]> filtered = new ArrayList<>();
-        for (String[] row : cachedRows) {
-            if (row[1].toLowerCase().contains(q) ||
-                row[0].toLowerCase().contains(q) ||
-                row[2].toLowerCase().contains(q))
-                filtered.add(row);
-        }
-        return filtered;
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  DB OPERATIONS
-    // ══════════════════════════════════════════════════════
-    private List<String[]> fetchSuppliers(String tab) {
-        List<String[]> rows = new ArrayList<>();
-        if (conn == null) { System.err.println("[suppliers_contents] conn is null"); return rows; }
-        try { if (conn.isClosed()) { System.err.println("[suppliers_contents] conn is closed"); return rows; } }
-        catch (Exception e) { return rows; }
-
-        String sql =
-            "SELECT supplier_id, supplier_name, ingredients, contact_info, address " +
-            "FROM dbo.Suppliers " +
-            "WHERE is_deleted = 0 AND [status] = ? " +
-            "ORDER BY supplier_name ASC";
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tab);
-            System.out.println("[suppliers_contents] fetchSuppliers: executing query for tab='" + tab + "'");
-            try (ResultSet rs = ps.executeQuery()) {
-                int count = 0;
-                while (rs.next()) {
-                    String suppId   = rs.getString("supplier_id");   if (suppId   == null) suppId   = "—";
-                    String name     = rs.getString("supplier_name"); if (name     == null) name     = "—";
-                    String ingreds  = rs.getString("ingredients");   if (ingreds  == null) ingreds  = "—";
-                    String contact  = rs.getString("contact_info");  if (contact  == null) contact  = "—";
-                    String address  = rs.getString("address");       if (address  == null) address  = "—";
-                    rows.add(new String[]{ suppId, name, ingreds, contact, address });
-                    count++;
-                }
-                System.out.println("[suppliers_contents] fetchSuppliers: loaded " + count + " row(s) for tab='" + tab + "'");
-            }
-        } catch (Exception e) {
-            System.err.println("[suppliers_contents] fetchSuppliers ERROR: " + e.getMessage());
-            e.printStackTrace();
-        }
-        return rows;
-    }
-
-    private String insertSupplier(String supplierName, String ingredients,
-                                   String contactInfo, String address) {
-        if (conn == null) return null;
-        try { if (conn.isClosed()) return null; } catch (Exception e) { return null; }
-
-        String newId = null;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT MAX(CAST(SUBSTRING(supplier_id, 6, LEN(supplier_id)) AS INT)) AS max_num " +
-                "FROM dbo.Suppliers WHERE is_deleted = 0")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    int maxNum = rs.getInt("max_num");
-                    if (rs.wasNull()) maxNum = 0;
-                    newId = String.format("SUP-%04d", maxNum + 1);
-                }
-            }
-        } catch (Exception e) { e.printStackTrace(); return null; }
-
-        if (newId == null) return null;
-
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO dbo.Suppliers (supplier_id, supplier_name, ingredients, contact_info, address) " +
-                "VALUES (?, ?, ?, ?, ?)")) {
-            ps.setString(1, newId);
-            ps.setString(2, supplierName);
-            ps.setString(3, ingredients);
-            ps.setString(4, contactInfo);
-            ps.setString(5, address);
-            ps.executeUpdate();
-            System.out.println("[suppliers_contents] insertSupplier: inserted " + newId);
-            return newId;
-        } catch (Exception e) { e.printStackTrace(); return null; }
-    }
-
-    private void updateSupplier(String supplierId, String supplierName,
-                                 String ingredients, String contactInfo, String address) {
-        if (conn == null) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.Suppliers SET supplier_name = ?, ingredients = ?, " +
-                "contact_info = ?, address = ? " +
-                "WHERE supplier_id = ? AND is_deleted = 0")) {
-            ps.setString(1, supplierName);
-            ps.setString(2, ingredients);
-            ps.setString(3, contactInfo);
-            ps.setString(4, address);
-            ps.setString(5, supplierId);
-            ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private void archiveSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Suppliers SET [status] = 'archived' WHERE supplier_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void restoreSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Suppliers SET [status] = 'active' WHERE supplier_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void hardDeleteAll() {
-        if (conn == null) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.Suppliers SET is_deleted = 1 WHERE is_deleted = 0 AND [status] = ?")) {
-            ps.setString(1, currentTab); ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private void exportCsv() {
-        if (cachedRows.isEmpty()) return;
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("Save Suppliers as CSV");
-        chooser.setInitialFileName("suppliers_" + currentTab + ".csv");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
-        Stage stage = null;
-        try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
-        File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
-        if (file == null) return;
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Supplier ID,Supplier Name,Ingredients,Contact Info,Address");
-            writer.newLine();
-            for (String[] row : cachedRows) {
-                writer.write(
-                    escapeCsv(row[0]) + "," + escapeCsv(row[1]) + "," +
-                    escapeCsv(row[2]) + "," + escapeCsv(row[3]) + "," + escapeCsv(row[4])
-                );
-                writer.newLine();
-            }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private String escapeCsv(String value) {
-        if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        return value;
     }
 
     // ══════════════════════════════════════════════════════
@@ -386,10 +204,10 @@ public class suppliers_contents {
         formBody.setPadding(new Insets(22, 28, 10, 28));
         VBox.setVgrow(formBody, Priority.ALWAYS);
 
-        VBox nameField     = buildFormField(FontAwesomeSolid.BUILDING,        "Supplier Name",    "e.g. Fresh Farms Co.");
-        VBox ingredField   = buildFormField(FontAwesomeSolid.SEEDLING,        "Ingredients",      "e.g. Espresso Beans, Oat Milk");
-        VBox contactField  = buildFormField(FontAwesomeSolid.PHONE,           "Contact Info",     "e.g. +63 912 345 6789");
-        VBox addressField  = buildFormField(FontAwesomeSolid.MAP_MARKER_ALT,  "Physical Address", "e.g. 123 Rizal St., Makati City");
+        VBox nameField    = buildFormField(FontAwesomeSolid.BUILDING,       "Supplier Name",    "e.g. Fresh Farms Co.");
+        VBox ingredField  = buildFormField(FontAwesomeSolid.SEEDLING,       "Ingredients",      "e.g. Espresso Beans, Oat Milk");
+        VBox contactField = buildFormField(FontAwesomeSolid.PHONE,          "Contact Info",     "e.g. +63 912 345 6789");
+        VBox addressField = buildFormField(FontAwesomeSolid.MAP_MARKER_ALT, "Physical Address", "e.g. 123 Rizal St., Makati City");
 
         TextField nameInput    = extractTextField(nameField);
         TextField ingredInput  = extractTextField(ingredField);
@@ -445,7 +263,7 @@ public class suppliers_contents {
                 return;
             }
 
-            String newId = insertSupplier(nameVal, ingredVal, contactVal, addressVal);
+            String newId = suppliers_util.insertSupplier(conn, nameVal, ingredVal, contactVal, addressVal);
             if (newId == null) {
                 errorLbl.setText("⚠  Failed to save. Check connection.");
                 errorLbl.setVisible(true);
@@ -471,7 +289,7 @@ public class suppliers_contents {
         stackRoot.getChildren().add(overlay);
     }
 
-    // ── Form field factory (empty) ────────────────────────
+    // ── Form field factory ────────────────────────────────
     private VBox buildFormField(FontAwesomeSolid iconCode, String label, String prompt) {
         Label fieldLabel = new Label(label);
         fieldLabel.setStyle(
@@ -508,7 +326,6 @@ public class suppliers_contents {
         return new VBox(6, fieldLabel, inputBox);
     }
 
-    // ── Form field factory (with pre-filled value) ────────
     private VBox buildFormFieldWithValue(FontAwesomeSolid iconCode, String label, String value) {
         VBox field = buildFormField(iconCode, label, "");
         extractTextField(field).setText(value);
@@ -632,7 +449,12 @@ public class suppliers_contents {
             stackRoot.getChildren().add(buildConfirmModal(
                 "Suppliers (" + currentTab + ")",
                 "This will permanently remove all suppliers in this view.\nThis action cannot be undone.",
-                () -> { hardDeleteAll(); cachedRows.clear(); selectedIds.clear(); rebuildTable(); }
+                () -> {
+                    suppliers_util.hardDeleteAll(conn, currentTab);
+                    cachedRows.clear();
+                    selectedIds.clear();
+                    rebuildTable();
+                }
             ))
         );
 
@@ -649,7 +471,11 @@ public class suppliers_contents {
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
-        exportCsvBtn.setOnMouseClicked(e -> exportCsv());
+        exportCsvBtn.setOnMouseClicked(e -> {
+            Stage stage = null;
+            try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
+            suppliers_util.exportCsv(cachedRows, currentTab, stage);
+        });
 
         activeTabBtn = buildTabLabel("Active", true);
         activeTabBtn.setLayoutX(activeTabX); activeTabBtn.setLayoutY(btnY);
@@ -697,14 +523,14 @@ public class suppliers_contents {
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
-            if (currentTab.equals("active")) archiveSelected(selectedIds);
-            else                             restoreSelected(selectedIds);
+            if (currentTab.equals("active")) suppliers_util.archiveSelected(conn, selectedIds);
+            else                             suppliers_util.restoreSelected(conn, selectedIds);
             selectedIds.clear(); archiveMode = false;
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
             repositionSearchBar();
-            cachedRows = fetchSuppliers(currentTab);
+            cachedRows = suppliers_util.fetchSuppliers(conn, currentTab);
             rebuildTable();
         });
 
@@ -746,7 +572,7 @@ public class suppliers_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        cachedRows  = fetchSuppliers("active");
+        cachedRows  = suppliers_util.fetchSuppliers(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
@@ -803,7 +629,7 @@ public class suppliers_contents {
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
         repositionSearchBar();
-        cachedRows = fetchSuppliers(tab);
+        cachedRows = suppliers_util.fetchSuppliers(conn, tab);
         rebuildTable();
     }
 
@@ -896,7 +722,8 @@ public class suppliers_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, getFilteredRows());
+        List<String[]> filtered = suppliers_util.getFilteredRows(cachedRows, searchQuery);
+        VBox tableBox = buildTable(tableW, filtered);
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -923,7 +750,7 @@ public class suppliers_contents {
         );
         table.getChildren().add(buildHeaderRow(tableW, dataW));
         if (rows.isEmpty()) {
-            String msg = !searchQuery.isBlank()
+            String msg = (searchQuery != null && !searchQuery.isBlank())
                 ? "No results found for \"" + searchQuery + "\"."
                 : currentTab.equals("archived") ? "No archived suppliers." : "No suppliers found.";
             Label empty = new Label(msg);
@@ -986,7 +813,6 @@ public class suppliers_contents {
                                String ingredients, String contactInfo, String address,
                                String bg, double tableW, double dataW, boolean isLast) {
         HBox row = new HBox(0);
-        // Use BASELINE alignment so wrapped cells align correctly
         row.setAlignment(Pos.TOP_LEFT);
         String  bottomRadius = isLast ? "0 0 10 10" : "0";
         String  borderBottom = isLast ? "0" : "1";
@@ -1000,17 +826,16 @@ public class suppliers_contents {
             row.setStyle(rowStyle(selectedIds.contains(supplierId) ? "#FDE8EA" : bg, bottomRadius, borderBottom))
         );
 
-        // ── Build cells: text or editable depending on editMode ──
         javafx.scene.Node nameCell;
         javafx.scene.Node ingredCell;
         javafx.scene.Node contactCell;
         javafx.scene.Node addressCell;
 
         if (editMode && currentTab.equals("active")) {
-            nameCell    = buildEditableTextCell(supplierId, supplierName,   ingredients, contactInfo, address, 1, dataW * COL_SUPP_NAME);
-            ingredCell  = buildEditableTextCell(supplierId, supplierName,   ingredients, contactInfo, address, 2, dataW * COL_INGREDIENT);
-            contactCell = buildEditableTextCell(supplierId, supplierName,   ingredients, contactInfo, address, 3, dataW * COL_CONTACT);
-            addressCell = buildEditableTextCell(supplierId, supplierName,   ingredients, contactInfo, address, 4, dataW * COL_ADDRESS);
+            nameCell    = buildEditableTextCell(supplierId, supplierName, ingredients, contactInfo, address, 1, dataW * COL_SUPP_NAME);
+            ingredCell  = buildEditableTextCell(supplierId, supplierName, ingredients, contactInfo, address, 2, dataW * COL_INGREDIENT);
+            contactCell = buildEditableTextCell(supplierId, supplierName, ingredients, contactInfo, address, 3, dataW * COL_CONTACT);
+            addressCell = buildEditableTextCell(supplierId, supplierName, ingredients, contactInfo, address, 4, dataW * COL_ADDRESS);
         } else {
             nameCell    = buildTextCell(supplierName, dataW * COL_SUPP_NAME,  false);
             ingredCell  = buildTextCell(ingredients,  dataW * COL_INGREDIENT, false);
@@ -1058,8 +883,6 @@ public class suppliers_contents {
                                         String currentName, String currentIngred,
                                         String currentContact, String currentAddress,
                                         int colIndex, double width) {
-
-        // Seed field with the value for this column
         String initialValue;
         switch (colIndex) {
             case 1:  initialValue = currentName;    break;
@@ -1088,10 +911,8 @@ public class suppliers_contents {
             if (newVal.isEmpty()) return;
             for (String[] r : cachedRows) {
                 if (r[0].equals(supplierId)) {
-                    // Update only this column in the cache
                     r[colIndex] = newVal;
-                    // Persist all four editable columns to DB
-                    updateSupplier(supplierId, r[1], r[2], r[3], r[4]);
+                    suppliers_util.updateSupplier(conn, supplierId, r[1], r[2], r[3], r[4]);
                     break;
                 }
             }
@@ -1118,16 +939,11 @@ public class suppliers_contents {
                "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
-    /**
-     * Builds a text cell that wraps its content so long values are never clipped.
-     * The label has no fixed height — it grows with the text — and the containing
-     * HBox has a minimum height of ROW_H so short rows still look comfortable.
-     */
     private HBox buildTextCell(String text, double width, boolean bold) {
         Label lbl = new Label(text != null ? text : "—");
-        lbl.setPrefWidth(width - 16);   // leave room for left padding
+        lbl.setPrefWidth(width - 16);
         lbl.setMaxWidth(width - 16);
-        lbl.setWrapText(true);          // ← KEY: allow wrapping
+        lbl.setWrapText(true);
         lbl.setPadding(new Insets(10, 8, 10, 0));
         lbl.setAlignment(Pos.TOP_LEFT);
         lbl.setStyle(
@@ -1137,7 +953,7 @@ public class suppliers_contents {
 
         HBox cell = new HBox(lbl);
         cell.setPrefWidth(width);
-        cell.setMinHeight(ROW_H);       // never shorter than one normal row
+        cell.setMinHeight(ROW_H);
         cell.setPadding(new Insets(0, 0, 0, 16));
         cell.setAlignment(Pos.TOP_LEFT);
         return cell;

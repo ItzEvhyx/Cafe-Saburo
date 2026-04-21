@@ -72,21 +72,23 @@ public class pos_records_window_ui {
     private final StackPane contentPane = new StackPane();
     private final Connection conn;
 
-    private menu_contents      menuContents;
-    private orders_contents    ordersContents;
-    private customers_contents customersContents;
-    private payments_contents  paymentsContents;
-    private timelogs_contents  timelogsContents;
-    private employees_contents employeesContents;
-    private inventory_contents inventoryContents;
-    private suppliers_contents suppliersContents;   // ← NEW
+    private menu_contents        menuContents;
+    private orders_contents      ordersContents;
+    private customers_contents   customersContents;
+    private payments_contents    paymentsContents;
+    private timelogs_contents    timelogsContents;
+    private employees_contents   employeesContents;
+    private inventory_contents   inventoryContents;
+    private suppliers_contents   suppliersContents;
+    private purchases_contents   purchasesContents;
+    private promotions_contents  promotionsContents;   // ← NEW
 
     // Live-updating labels in Card 3
-    private Label     hoursWorkedValue;
-    private Timeline  shiftClock;
+    private Label    hoursWorkedValue;
+    private Timeline shiftClock;
 
     // Root overlay pane for modals
-    private Pane      rootPane;
+    private Pane rootPane;
 
     private static boolean fontsLoaded = false;
     private static void loadFonts() {
@@ -131,14 +133,16 @@ public class pos_records_window_ui {
         double contentW = screenW - CONTENT_X - 10;
 
         // ── Instantiate all content views ─────────────────
-        menuContents      = new menu_contents(contentW, CONTENT_H, conn);
-        ordersContents    = new orders_contents(contentW, CONTENT_H, conn);
-        customersContents = new customers_contents(contentW, CONTENT_H, conn);
-        paymentsContents  = new payments_contents(contentW, CONTENT_H, conn);
-        timelogsContents  = new timelogs_contents(contentW, CONTENT_H, conn);
-        employeesContents = new employees_contents(contentW, CONTENT_H, conn);
-        inventoryContents = new inventory_contents(contentW, CONTENT_H, conn);
-        suppliersContents = new suppliers_contents(contentW, CONTENT_H, conn);  // ← NEW
+        menuContents       = new menu_contents(contentW, CONTENT_H, conn);
+        ordersContents     = new orders_contents(contentW, CONTENT_H, conn);
+        customersContents  = new customers_contents(contentW, CONTENT_H, conn);
+        paymentsContents   = new payments_contents(contentW, CONTENT_H, conn);
+        timelogsContents   = new timelogs_contents(contentW, CONTENT_H, conn);
+        employeesContents  = new employees_contents(contentW, CONTENT_H, conn);
+        inventoryContents  = new inventory_contents(contentW, CONTENT_H, conn);
+        suppliersContents  = new suppliers_contents(contentW, CONTENT_H, conn);
+        purchasesContents  = new purchases_contents(contentW, CONTENT_H, conn);
+        promotionsContents = new promotions_contents(contentW, CONTENT_H, conn);  // ← NEW
 
         // ── Cross-view live-update wiring ─────────────────
         menuContents.setOnOrderSubmitted(result -> {
@@ -198,7 +202,7 @@ public class pos_records_window_ui {
         HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",   38, 20, isManager);
         HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",  38, 20, isManager);
         HBox inventoryBtn  = createNavButton("Inventory",  "assets/icons/inventory_icon.png",  38, 20, isManager);
-        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",  38, 20, isManager);  // ← now wired
+        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",  38, 20, isManager);
         HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",  38, 20, isManager);
         HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png", 38, 20, isManager);
 
@@ -267,9 +271,9 @@ public class pos_records_window_ui {
             timeLogsBtn.setOnMouseClicked(e   -> showTimeLogs());
             employeesBtn.setOnMouseClicked(e  -> showEmployees());
             inventoryBtn.setOnMouseClicked(e  -> showInventory());
-            suppliersBtn.setOnMouseClicked(e  -> showSuppliers());   // ← wired
-            purchasesBtn.setOnMouseClicked(e  -> switchContent("Purchases"));
-            promotionsBtn.setOnMouseClicked(e -> switchContent("Promotions"));
+            suppliersBtn.setOnMouseClicked(e  -> showSuppliers());
+            purchasesBtn.setOnMouseClicked(e  -> showPurchases());
+            promotionsBtn.setOnMouseClicked(e -> showPromotions());   // ← NEW
         }
 
         // ── Start live clock ──────────────────────────────
@@ -461,9 +465,7 @@ public class pos_records_window_ui {
             System.out.println("[TIME-OUT] Duration : " + hoursWorked);
             if (auth_util.isEmployee()) {
                 boolean stamped = auth_util.timeOut();
-                if (!stamped) {
-                    System.err.println("[TIME-OUT] WARNING: DB stamp failed.");
-                }
+                if (!stamped) System.err.println("[TIME-OUT] WARNING: DB stamp failed.");
             } else {
                 auth_util.logout();
             }
@@ -500,49 +502,32 @@ public class pos_records_window_ui {
     private void showMenu() {
         contentPane.getChildren().setAll(menuContents.getView());
     }
-
     private void showOrders() {
         contentPane.getChildren().setAll(ordersContents.getView());
     }
-
     private void showCustomers() {
         contentPane.getChildren().setAll(customersContents.getView());
     }
-
     private void showPayments() {
         contentPane.getChildren().setAll(paymentsContents.getView());
     }
-
     private void showTimeLogs() {
         contentPane.getChildren().setAll(timelogsContents.getView());
     }
-
     private void showEmployees() {
         contentPane.getChildren().setAll(employeesContents.getView());
     }
-
     private void showInventory() {
         contentPane.getChildren().setAll(inventoryContents.getView());
     }
-
     private void showSuppliers() {
-        contentPane.getChildren().setAll(suppliersContents.getView());  // ← NEW
+        contentPane.getChildren().setAll(suppliersContents.getView());
     }
-
-    private void switchContent(String tab) {
-        contentPane.getChildren().setAll(makePlaceholder(tab));
+    private void showPurchases() {
+        contentPane.getChildren().setAll(purchasesContents.getView());
     }
-
-    private Label makePlaceholder(String tab) {
-        Label label = new Label(tab + " section — to be made soon!");
-        label.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 22px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: #882F39;" +
-            "-fx-opacity: 0.5;"
-        );
-        return label;
+    private void showPromotions() {
+        contentPane.getChildren().setAll(promotionsContents.getView());   // ← NEW
     }
 
     // ══════════════════════════════════════════════════════

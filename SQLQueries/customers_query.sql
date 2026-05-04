@@ -1,19 +1,9 @@
--- ============================================================
---  SQLQueries/customers_query.sql
---  Cafe Saburo POS — Customer Queries
---  Dialect: T-SQL (SQL Server)
---
---  !! Run customers_setup.sql FIRST before executing these !!
---
---  Soft delete : is_deleted = 1  → hidden from all normal views
---  Archive     : status = 'archived' → accessible via Archived tab
--- ============================================================
+-- customers_query.sql — Cafe Saburo POS: Customer Queries
+-- Dialect: T-SQL (SQL Server) | Run customers_setup.sql FIRST before executing these
+-- Soft delete: is_deleted = 1 → hidden from all normal views | Archive: status = 'archived' → accessible via Archived tab
 
 
--- ============================================================
---  QUERY 1 — All active, non-deleted customers with loyalty pts
--- ============================================================
-
+-- Returns all active customers with their latest order ID and accumulated loyalty points
 SELECT
     c.customer_id,
     c.customer_name,
@@ -32,13 +22,10 @@ LEFT JOIN (
 WHERE c.is_deleted = 0
   AND c.status     = 'active'
 ORDER BY loyalty_pts DESC;
-
 GO
 
--- ============================================================
---  QUERY 2 — Active customers (at least 1 non-deleted order)
--- ============================================================
 
+-- Returns active customers who have placed at least one non-deleted order, with their total order count and loyalty points
 SELECT
     c.customer_id,
     c.customer_name,
@@ -52,13 +39,10 @@ WHERE c.is_deleted = 0
   AND c.status     = 'active'
 GROUP BY c.customer_id, c.customer_name
 ORDER BY loyalty_pts DESC;
-
 GO
 
--- ============================================================
---  QUERY 3 — Active customers with no orders yet
--- ============================================================
 
+-- Returns active customers who have never placed an order
 SELECT
     c.customer_id,
     c.customer_name,
@@ -72,13 +56,10 @@ WHERE c.is_deleted = 0
       WHERE o.customer_id = c.customer_id
         AND o.is_deleted  = 0
   );
-
 GO
 
--- ============================================================
---  QUERY 4 — Top spenders with loyalty tier (active only)
--- ============================================================
 
+-- Returns active customers ranked by spend with Gold/Silver/Bronze loyalty tiers (Gold ≥5 orders, Silver ≥3)
 SELECT
     c.customer_name,
     COUNT(o.order_id)       AS total_orders,
@@ -97,13 +78,10 @@ WHERE c.is_deleted = 0
   AND c.status     = 'active'
 GROUP BY c.customer_id, c.customer_name
 ORDER BY loyalty_pts DESC;
-
 GO
 
--- ============================================================
---  QUERY 5 — Archived customers
--- ============================================================
 
+-- Returns all archived customers with their accumulated loyalty points
 SELECT
     c.customer_id,
     c.customer_name,
@@ -119,15 +97,10 @@ LEFT JOIN (
 WHERE c.is_deleted = 0
   AND c.status     = 'archived'
 ORDER BY c.customer_name;
-
 GO
 
--- ============================================================
---  QUERY 6 — Soft-delete a customer
---  (also soft-deletes their orders to keep data consistent)
---  Replace 'CUST-0003' with the target customer_id.
--- ============================================================
 
+-- Soft-deletes a customer and all their orders; replace 'CUST-0003' with the target customer_id
 UPDATE dbo.Orders
 SET    is_deleted = 1,
        deleted_at = GETDATE()
@@ -138,14 +111,10 @@ UPDATE dbo.Customers
 SET    is_deleted = 1,
        deleted_at = GETDATE()
 WHERE  customer_id = 'CUST-0003';
-
 GO
 
--- ============================================================
---  QUERY 7 — Archive a customer (and their orders)
---  Replace 'CUST-0003' with the target customer_id.
--- ============================================================
 
+-- Archives a customer and their active orders; replace 'CUST-0003' with the target customer_id
 UPDATE dbo.Orders
 SET    status = 'archived'
 WHERE  customer_id = 'CUST-0003'
@@ -154,14 +123,10 @@ WHERE  customer_id = 'CUST-0003'
 UPDATE dbo.Customers
 SET    status = 'archived'
 WHERE  customer_id = 'CUST-0003';
-
 GO
 
--- ============================================================
---  QUERY 8 — Restore an archived customer back to active
---  Replace 'CUST-0003' with the target customer_id.
--- ============================================================
 
+-- Restores an archived customer and their orders back to active; replace 'CUST-0003' with the target customer_id
 UPDATE dbo.Orders
 SET    status = 'active'
 WHERE  customer_id = 'CUST-0003'
@@ -170,5 +135,4 @@ WHERE  customer_id = 'CUST-0003'
 UPDATE dbo.Customers
 SET    status = 'active'
 WHERE  customer_id = 'CUST-0003';
-
 GO

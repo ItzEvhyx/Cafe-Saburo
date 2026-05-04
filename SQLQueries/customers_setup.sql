@@ -1,46 +1,25 @@
--- ============================================================
---  SQLQueries/customers_setup.sql
---  Cafe Saburo POS — Customers + Orders Table Setup
---  Dialect: T-SQL (SQL Server)
---
---  !! RUN THIS FILE ONCE TO SET UP YOUR DATABASE !!
---  Run this BEFORE customers_query.sql or orders_query.sql.
---
---  Rules enforced:
---    • Every customer must have at least one order.
---    • Every order grants +10 loyalty points to the customer.
---    • Soft delete  : is_deleted = 1, deleted_at = timestamp (row hidden, not removed)
---    • Archive      : status = 'archived'  (moved out of active view, still accessible)
--- ============================================================
+-- customers_setup.sql — Cafe Saburo POS: Customers + Orders schema and seed data (Batch 2: CUST-0021 to CUST-0040)
+-- Dialect: T-SQL (SQL Server) | Run this BEFORE customers_query.sql or orders_query.sql
 
-
--- ============================================================
---  DROP (safe re-run — Orders first because of FK)
--- ============================================================
-
+-- Drop Orders first to satisfy FK dependency before dropping Customers
 IF OBJECT_ID('dbo.Orders',    'U') IS NOT NULL DROP TABLE dbo.Orders;
 IF OBJECT_ID('dbo.Customers', 'U') IS NOT NULL DROP TABLE dbo.Customers;
-
 GO
 
--- ============================================================
---  CREATE TABLES
--- ============================================================
-
+-- Customers: core identity, loyalty points, and lifecycle flags (soft-delete + archive)
 CREATE TABLE dbo.Customers (
     customer_id     VARCHAR(10)   NOT NULL PRIMARY KEY,
     customer_name   VARCHAR(100)  NOT NULL,
     email           VARCHAR(100),
     phone           VARCHAR(20),
     loyalty_points  INT           NOT NULL DEFAULT 0,
-    -- Soft delete
     is_deleted      BIT           NOT NULL DEFAULT 0,
     deleted_at      DATETIME      NULL,
-    -- Archive
     status          VARCHAR(10)   NOT NULL DEFAULT 'active',
     CONSTRAINT chk_customer_status CHECK (status IN ('active', 'archived'))
 );
 
+-- Orders: linked to Customers via FK; enforces valid order statuses, payment types, and archive states
 CREATE TABLE dbo.Orders (
     order_id      VARCHAR(10)   NOT NULL PRIMARY KEY,
     customer_id   VARCHAR(10)   NOT NULL,
@@ -48,29 +27,17 @@ CREATE TABLE dbo.Orders (
     payment_type  VARCHAR(20)   NOT NULL,
     order_date    DATE          NOT NULL,
     total_amount  DECIMAL(8,2)  NOT NULL,
-    -- Soft delete
     is_deleted    BIT           NOT NULL DEFAULT 0,
     deleted_at    DATETIME      NULL,
-    -- Archive
     status        VARCHAR(10)   NOT NULL DEFAULT 'active',
-    CONSTRAINT fk_customer
-        FOREIGN KEY (customer_id) REFERENCES dbo.Customers(customer_id),
-    CONSTRAINT chk_order_status
-        CHECK (order_status IN ('Pending', 'Preparing', 'Completed', 'Cancelled')),
-    CONSTRAINT chk_payment
-        CHECK (payment_type IN ('Cash', 'GCash', 'Card')),
-    CONSTRAINT chk_order_archive_status
-        CHECK (status IN ('active', 'archived'))
+    CONSTRAINT fk_customer              FOREIGN KEY (customer_id) REFERENCES dbo.Customers(customer_id),
+    CONSTRAINT chk_order_status         CHECK (order_status IN ('Pending', 'Preparing', 'Completed', 'Cancelled')),
+    CONSTRAINT chk_payment              CHECK (payment_type IN ('Cash', 'GCash', 'Card')),
+    CONSTRAINT chk_order_archive_status CHECK (status IN ('active', 'archived'))
 );
-
 GO
 
--- ============================================================
---  SEED DATA — 20 Customers (Batch 2: CUST-0021 to CUST-0040)
---  loyalty_points starts at 0; updated after orders are inserted.
---  All seeded records default to: is_deleted = 0, status = 'active'
--- ============================================================
-
+-- Seed 20 customers (CUST-0021 to CUST-0040); loyalty_points are calculated after orders are inserted
 INSERT INTO dbo.Customers (customer_id, customer_name, email, phone) VALUES
     ('CUST-0021', 'Andrea Pascual',    'andrea.p@email.com',     '09171234568'),
     ('CUST-0022', 'Bernard Ocampo',    'bernard.o@email.com',    '09281234568'),
@@ -92,18 +59,10 @@ INSERT INTO dbo.Customers (customer_id, customer_name, email, phone) VALUES
     ('CUST-0038', 'Salvador Navarro',  'salvador.n@email.com',   '09395556688'),
     ('CUST-0039', 'Theresa Castro',    'theresa.c@email.com',    '09176667799'),
     ('CUST-0040', 'Ulysses Mendoza',   'ulysses.m@email.com',    '09287778800');
-
 GO
 
--- ============================================================
---  SEED DATA — 32 Orders (Batch 2: ORD-0033 to ORD-0064)
---  Every customer (CUST-0021 to CUST-0040) has at least one order.
---  Several customers have multiple orders for varied loyalty points.
---  All seeded records default to: is_deleted = 0, status = 'active'
--- ============================================================
-
+-- Seed 32 orders (ORD-0033 to ORD-0064); every customer has at least one order, several have multiple for varied point totals
 INSERT INTO dbo.Orders (order_id, customer_id, order_status, payment_type, order_date, total_amount) VALUES
-    -- Primary orders — one per customer
     ('ORD-0033', 'CUST-0021', 'Completed',  'Cash',  '2025-03-01', 155.00),
     ('ORD-0034', 'CUST-0022', 'Completed',  'GCash', '2025-03-02', 200.00),
     ('ORD-0035', 'CUST-0023', 'Cancelled',  'Card',  '2025-03-03', 175.00),
@@ -124,7 +83,6 @@ INSERT INTO dbo.Orders (order_id, customer_id, order_status, payment_type, order
     ('ORD-0050', 'CUST-0038', 'Completed',  'Cash',  '2025-03-18', 190.00),
     ('ORD-0051', 'CUST-0039', 'Preparing',  'Card',  '2025-03-19', 165.00),
     ('ORD-0052', 'CUST-0040', 'Completed',  'GCash', '2025-03-20', 185.00),
-    -- Additional orders for varied loyalty point totals
     ('ORD-0053', 'CUST-0021', 'Completed',  'GCash', '2025-03-21', 190.00),
     ('ORD-0054', 'CUST-0021', 'Completed',  'Cash',  '2025-03-22', 145.00),
     ('ORD-0055', 'CUST-0022', 'Completed',  'Card',  '2025-03-23', 180.00),
@@ -137,14 +95,9 @@ INSERT INTO dbo.Orders (order_id, customer_id, order_status, payment_type, order
     ('ORD-0062', 'CUST-0034', 'Completed',  'Card',  '2025-03-30', 140.00),
     ('ORD-0063', 'CUST-0038', 'Completed',  'Cash',  '2025-03-31', 175.00),
     ('ORD-0064', 'CUST-0040', 'Completed',  'GCash', '2025-04-01', 200.00);
-
 GO
 
--- ============================================================
---  UPDATE LOYALTY POINTS
---  Every order = +10 points (only non-deleted orders count).
--- ============================================================
-
+-- Recalculate loyalty_points for all customers: 10 points per non-deleted order
 UPDATE dbo.Customers
 SET loyalty_points = (
     SELECT COUNT(*) * 10
@@ -152,5 +105,4 @@ SET loyalty_points = (
     WHERE dbo.Orders.customer_id = dbo.Customers.customer_id
       AND dbo.Orders.is_deleted  = 0
 );
-
 GO

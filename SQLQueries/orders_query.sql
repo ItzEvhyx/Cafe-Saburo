@@ -1,28 +1,16 @@
--- ============================================================
---  SQLQueries/orders_query.sql
---  Cafe Saburo POS — Orders Table
---  Dialect: T-SQL (SQL Server)
---
---  Soft delete : is_deleted = 1, deleted_at = timestamp
---                Row is hidden from UI but kept in DB.
---  Archive     : status = 'archived'
---                Row moves to Archived tab, off Active view.
--- ============================================================
+-- orders_query.sql — Cafe Saburo POS: Orders and Customers tables with seed data and example queries
+-- Dialect: T-SQL (SQL Server)
+-- Soft delete: is_deleted = 1, deleted_at = timestamp (row hidden from UI, retained in DB)
+-- Archive:     status = 'archived' (row moved to Archived tab, removed from Active view)
 
 
--- ============================================================
---  DROP TABLES (safe re-run)
--- ============================================================
-
+-- Drop existing tables to allow safe re-run
 IF OBJECT_ID('dbo.Orders',    'U') IS NOT NULL DROP TABLE dbo.Orders;
 IF OBJECT_ID('dbo.Customers', 'U') IS NOT NULL DROP TABLE dbo.Customers;
-
 GO
 
--- ============================================================
---  CREATE TABLES
--- ============================================================
 
+-- Customers: stores customer profiles with loyalty points and soft-delete/archive lifecycle
 CREATE TABLE Customers (
     customer_id     VARCHAR(10)   NOT NULL PRIMARY KEY,
     customer_name   VARCHAR(100)  NOT NULL,
@@ -35,6 +23,7 @@ CREATE TABLE Customers (
     CONSTRAINT chk_customer_status CHECK (status IN ('active', 'archived'))
 );
 
+-- Orders: stores transaction records linked to Customers with soft-delete and archive lifecycle
 CREATE TABLE Orders (
     order_id      VARCHAR(10)   NOT NULL PRIMARY KEY,
     customer_id   VARCHAR(10)   NOT NULL,
@@ -54,13 +43,10 @@ CREATE TABLE Orders (
     CONSTRAINT chk_order_archive_status
         CHECK (status IN ('active', 'archived'))
 );
-
 GO
 
--- ============================================================
---  SEED DATA — Customers
--- ============================================================
 
+-- Seed 8 customers
 INSERT INTO Customers (customer_id, customer_name, email, phone) VALUES
     ('CUST-0001', 'Ana Reyes',        'ana.reyes@email.com',     '09171234567'),
     ('CUST-0002', 'Ben Santos',       'ben.santos@email.com',    '09281234567'),
@@ -72,10 +58,7 @@ INSERT INTO Customers (customer_id, customer_name, email, phone) VALUES
     ('CUST-0008', 'Hector Navarro',   'hector.n@email.com',      '09285556677');
 
 
--- ============================================================
---  SEED DATA — Orders (20 entries)
--- ============================================================
-
+-- Seed 20 orders spread across January 2025
 INSERT INTO Orders (order_id, customer_id, order_status, payment_type, order_date, total_amount) VALUES
     ('ORD-0001', 'CUST-0001', 'Completed',  'Cash',  '2025-01-10', 150.00),
     ('ORD-0002', 'CUST-0002', 'Completed',  'GCash', '2025-01-11', 195.00),
@@ -97,13 +80,10 @@ INSERT INTO Orders (order_id, customer_id, order_status, payment_type, order_dat
     ('ORD-0018', 'CUST-0002', 'Preparing',  'Cash',  '2025-01-27', 190.00),
     ('ORD-0019', 'CUST-0003', 'Completed',  'Card',  '2025-01-28', 160.00),
     ('ORD-0020', 'CUST-0004', 'Completed',  'GCash', '2025-01-29', 175.00);
-
 GO
 
--- ============================================================
---  QUERY 1 — Active, non-deleted orders (default view)
--- ============================================================
 
+-- Q1: Default active view — all non-deleted, active orders sorted newest first
 SELECT
     order_id,
     customer_id,
@@ -117,12 +97,7 @@ WHERE is_deleted = 0
 ORDER BY order_date DESC;
 
 
--- ============================================================
---  QUERY 2 — WHERE + LOGICAL OPERATORS (AND / OR / NOT)
---  Active, non-deleted orders that are Pending or Preparing,
---  paid by GCash or Card.
--- ============================================================
-
+-- Q2: In-progress orders paid by GCash or Card (excludes Cancelled via NOT)
 SELECT
     order_id,
     customer_id,
@@ -137,11 +112,7 @@ WHERE is_deleted = 0
   AND NOT order_status = 'Cancelled';
 
 
--- ============================================================
---  QUERY 3 — GROUP BY + HAVING + COUNT + SUM
---  Active customers with more than 2 non-deleted orders.
--- ============================================================
-
+-- Q3: Customers with more than 2 non-deleted orders, ranked by total spend
 SELECT
     customer_id,
     COUNT(order_id)   AS total_orders,
@@ -153,11 +124,7 @@ HAVING COUNT(order_id) > 2
 ORDER BY total_spent DESC;
 
 
--- ============================================================
---  QUERY 4 — JOIN + WHERE + ORDER BY
---  Completed, active, non-deleted orders with customer names.
--- ============================================================
-
+-- Q4: Completed active orders joined with customer names, sorted oldest first
 SELECT
     o.order_id,
     c.customer_name,
@@ -173,11 +140,7 @@ WHERE o.is_deleted = 0
 ORDER BY o.order_date ASC;
 
 
--- ============================================================
---  QUERY 5 — JOIN + GROUP BY + AVG + HAVING
---  Customers (non-deleted) whose avg order value exceeds ₱150.
--- ============================================================
-
+-- Q5: Customers whose average order value exceeds ₱150, ranked by average descending
 SELECT
     c.customer_name,
     COUNT(o.order_id)              AS num_orders,
@@ -192,11 +155,7 @@ HAVING AVG(o.total_amount) > 150.00
 ORDER BY avg_order_value DESC;
 
 
--- ============================================================
---  QUERY 6 — CASE EXPRESSION + JOIN
---  Spend tier + activity flag for active, non-deleted orders.
--- ============================================================
-
+-- Q6: Each order labeled with a spend tier (High/Medium/Low) and an activity flag (Active/Done/Inactive)
 SELECT
     o.order_id,
     c.customer_name,
@@ -219,12 +178,8 @@ WHERE o.is_deleted = 0
 ORDER BY o.total_amount DESC;
 
 
--- ============================================================
---  QUERY 7 — VIEW: active completed orders with spend tier
--- ============================================================
-
+-- Q7: View — active completed orders enriched with customer contact info and spend tier
 GO
-
 CREATE OR ALTER VIEW vw_completed_orders AS
 SELECT
     o.order_id,
@@ -243,17 +198,12 @@ INNER JOIN Customers AS c ON o.customer_id = c.customer_id
 WHERE o.order_status = 'Completed'
   AND o.is_deleted   = 0
   AND o.status       = 'active';
-
 GO
 
 SELECT * FROM vw_completed_orders ORDER BY order_date DESC;
 
 
--- ============================================================
---  QUERY 8 — SUBQUERY in WHERE
---  Non-deleted orders above the overall average total.
--- ============================================================
-
+-- Q8: Non-deleted orders whose total exceeds the overall average (subquery in WHERE)
 SELECT
     order_id,
     customer_id,
@@ -269,11 +219,7 @@ WHERE is_deleted   = 0
 ORDER BY total_amount DESC;
 
 
--- ============================================================
---  QUERY 9 — SUBQUERY in FROM (derived table) + JOIN
---  Rank customers by lifetime spend (non-deleted orders only).
--- ============================================================
-
+-- Q9: Customers ranked by lifetime spend using a derived table in FROM
 SELECT
     c.customer_name,
     spend_summary.total_orders,
@@ -292,10 +238,7 @@ WHERE c.is_deleted = 0
 ORDER BY spend_summary.lifetime_spend DESC;
 
 
--- ============================================================
---  QUERY 10 — EXISTS: customers with at least one Cancelled order
--- ============================================================
-
+-- Q10: Active customers who have at least one non-deleted Cancelled order (EXISTS subquery)
 SELECT
     c.customer_id,
     c.customer_name,
@@ -311,21 +254,14 @@ WHERE c.is_deleted = 0
   );
 
 
--- ============================================================
---  QUERY 11 — Soft delete an order (instead of DELETE)
---  Marks an order as deleted without removing the row.
--- ============================================================
-
+-- Q11: Soft-delete a single order by ID (marks deleted without removing the row)
 UPDATE Orders
 SET    is_deleted = 1,
        deleted_at = GETDATE()
-WHERE  order_id   = 'ORD-0003';  -- example order
+WHERE  order_id   = 'ORD-0003';
 
 
--- ============================================================
---  QUERY 12 — Archive old orders (completed before a cutoff)
--- ============================================================
-
+-- Q12: Bulk-archive all completed orders placed before a cutoff date
 UPDATE Orders
 SET    status = 'archived'
 WHERE  order_status = 'Completed'
@@ -333,10 +269,7 @@ WHERE  order_status = 'Completed'
   AND  is_deleted   = 0;
 
 
--- ============================================================
---  QUERY 13 — View archived orders
--- ============================================================
-
+-- Q13: Retrieve all archived, non-deleted orders joined with customer names
 SELECT
     o.order_id,
     c.customer_name,
@@ -351,18 +284,12 @@ WHERE o.status     = 'archived'
 ORDER BY o.order_date DESC;
 
 
--- ============================================================
---  QUERY 14 — Restore an archived order back to active
--- ============================================================
-
+-- Q14: Restore a single archived order back to active status
 UPDATE Orders
 SET    status = 'active'
-WHERE  order_id = 'ORD-0001';  -- example order
+WHERE  order_id = 'ORD-0001';
 
 
--- ============================================================
---  QUERY 15 — Permanently purge all soft-deleted rows (admin only)
--- ============================================================
-
+-- Q15: Permanently purge all soft-deleted rows from both tables (admin use only)
 DELETE FROM Orders    WHERE is_deleted = 1;
 DELETE FROM Customers WHERE is_deleted = 1;

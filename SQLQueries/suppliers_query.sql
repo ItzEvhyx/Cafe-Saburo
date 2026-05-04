@@ -1,46 +1,12 @@
--- ============================================================
---  SQLQueries/suppliers_query.sql
---  Cafe Saburo POS — Suppliers CRUD Queries  (v3)
---  Dialect: T-SQL (SQL Server)
---
---  Run AFTER suppliers_setup.sql (v3).
---
---  Key change from v2:
---    All READ queries now target dbo.vw_Suppliers instead of
---    the base table.  The view already computes the
---    `ingredients` column via STRING_AGG, so Java receives
---    the same 5-column result set it always expected:
---      supplier_id | supplier_name | ingredients | contact_info | address
---
---  !! JAVA CHANGE REQUIRED !!
---    In suppliers_contents.java, change the FROM clause of
---    your fetchSuppliers SELECT from  dbo.Suppliers  to
---    dbo.vw_Suppliers  (or use the queries below verbatim).
---
---  Sections:
---    1. READ   — fetch active / archived suppliers
---    2. INSERT — add supplier + junction rows
---    3. UPDATE — edit supplier fields
---    4. MANAGE INGREDIENTS — add / remove junction rows
---    5. ARCHIVE / RESTORE
---    6. SOFT DELETE
---    7. EXPORT helper
--- ============================================================
+-- suppliers_query.sql  |  Cafe Saburo POS — Suppliers CRUD Queries  |  T-SQL (SQL Server)
+-- All READ queries target dbo.vw_Suppliers (not the base table) — the view handles STRING_AGG.
+-- Java fetchSuppliers() receives: supplier_id | supplier_name | ingredients | contact_info | address
+-- Run AFTER suppliers_setup.sql.
 
 SET QUOTED_IDENTIFIER ON;
 GO
 
--- ============================================================
---  1.  READ — used by fetchSuppliers(tab) in Java
---
---      Returns columns in the order the Java code expects:
---        supplier_id | supplier_name | ingredients | contact_info | address
---
---      Queries dbo.vw_Suppliers — the view handles the join
---      and STRING_AGG so this stays a simple SELECT.
--- ============================================================
-
--- Active suppliers
+-- ── 1a. READ: Active suppliers from the view (ingredients already aggregated) ──────────────────
 SELECT
     supplier_id,
     supplier_name,
@@ -51,10 +17,9 @@ FROM  dbo.vw_Suppliers
 WHERE is_deleted = 0
   AND [status]   = 'active'
 ORDER BY supplier_name ASC;
-
 GO
 
--- Archived suppliers
+-- ── 1b. READ: Archived suppliers only ───────────────────────────────────────────────────────────
 SELECT
     supplier_id,
     supplier_name,
@@ -65,39 +30,29 @@ FROM  dbo.vw_Suppliers
 WHERE is_deleted = 0
   AND [status]   = 'archived'
 ORDER BY supplier_name ASC;
-
 GO
 
--- ============================================================
---  2.  INSERT a new supplier
---      Step 1: generate next ID (same pattern as Java)
--- ============================================================
-
--- Step 1: get current max suffix
+-- ── 2a. INSERT (Step 1): Get current max suffix to generate the next supplier_id ────────────────
+-- Java: newId = String.format("SUP-%04d", maxNum + 1)
 SELECT
     MAX(CAST(SUBSTRING(supplier_id, 5, LEN(supplier_id)) AS INT)) AS max_num
 FROM dbo.Suppliers
 WHERE is_deleted = 0;
--- Java: newId = String.format("SUP-%04d", maxNum + 1)
+GO
 
--- Step 2: insert the supplier header row
--- Parameters: supplier_id, supplier_name, contact_info, address
+-- ── 2b. INSERT (Step 2): Insert the supplier header row ─────────────────────────────────────────
+-- Params: supplier_id, supplier_name, contact_info, address
 INSERT INTO dbo.Suppliers (supplier_id, supplier_name, contact_info, address)
 VALUES (?, ?, ?, ?);
 
--- Step 3: link each selected inventory item in the junction table
--- Repeat for each inventory_id the user picks in the modal
+-- ── 2c. INSERT (Step 3): Link each selected inventory item in the junction table (repeat per item)
+-- Params: supplier_id, inventory_id
 INSERT INTO dbo.Supplier_Ingredients (supplier_id, inventory_id)
 VALUES (?, ?);
-
 GO
 
--- ============================================================
---  3.  UPDATE supplier header fields
---      (Does NOT touch junction rows — see section 4)
--- ============================================================
-
--- Parameters: supplier_name, contact_info, address, supplier_id
+-- ── 3. UPDATE: Edit supplier header fields only; junction rows handled separately in section 4 ──
+-- Params: supplier_name, contact_info, address, supplier_id
 UPDATE dbo.Suppliers
 SET
     supplier_name = ?,
@@ -105,39 +60,28 @@ SET
     address       = ?
 WHERE supplier_id = ?
   AND is_deleted  = 0;
-
 GO
 
--- ============================================================
---  4.  MANAGE INGREDIENTS (junction table)
---
---  Add a single ingredient link
--- ============================================================
-
+-- ── 4a. MANAGE INGREDIENTS: Add a single ingredient link to the junction table ─────────────────
 INSERT INTO dbo.Supplier_Ingredients (supplier_id, inventory_id)
 VALUES (?, ?);
-
 GO
 
--- Remove a single ingredient link
+-- ── 4b. MANAGE INGREDIENTS: Remove a single ingredient link from the junction table ────────────
 DELETE FROM dbo.Supplier_Ingredients
 WHERE supplier_id  = ?
   AND inventory_id = ?;
-
 GO
 
--- Replace ALL ingredient links for a supplier in one operation
--- (delete old ones, re-insert from the new list)
+-- ── 4c. MANAGE INGREDIENTS: Replace all ingredient links in one operation (delete then re-insert)
+-- Step 1: wipe existing links; Step 2: re-insert each inventory_id from the updated list
 DELETE FROM dbo.Supplier_Ingredients WHERE supplier_id = ?;
 
--- Then re-insert each inventory_id from the updated list:
 INSERT INTO dbo.Supplier_Ingredients (supplier_id, inventory_id)
 VALUES (?, ?);
-
 GO
 
--- Fetch current ingredient links for a single supplier
--- (useful for pre-populating the edit modal)
+-- ── 4d. MANAGE INGREDIENTS: Fetch current ingredient links to pre-populate the edit modal ───────
 SELECT
     si.inventory_id,
     i.ingredient,
@@ -147,73 +91,51 @@ JOIN  dbo.Inventory             i  ON i.inventory_id = si.inventory_id
                                    AND i.is_deleted  = 0
 WHERE si.supplier_id = ?
 ORDER BY i.ingredient ASC;
-
 GO
 
--- ============================================================
---  5.  ARCHIVE / RESTORE
---      Junction rows are left intact — they come back when
---      the supplier is restored.
--- ============================================================
-
--- Archive one supplier
+-- ── 5a. ARCHIVE: Move a single supplier to archived status; junction rows preserved for restore ─
 UPDATE dbo.Suppliers
 SET [status] = 'archived'
 WHERE supplier_id = ?
   AND is_deleted  = 0;
-
 GO
 
--- Restore one supplier
+-- ── 5b. RESTORE: Restore a single archived supplier back to active ───────────────────────────────
 UPDATE dbo.Suppliers
 SET [status] = 'active'
 WHERE supplier_id = ?
   AND is_deleted  = 0;
-
 GO
 
--- Archive ALL active suppliers
+-- ── 5c. ARCHIVE ALL: Archive every non-deleted active supplier in bulk ───────────────────────────
 UPDATE dbo.Suppliers
 SET [status] = 'archived'
 WHERE is_deleted = 0
   AND [status]   = 'active';
-
 GO
 
--- Restore ALL archived suppliers
+-- ── 5d. RESTORE ALL: Restore every archived supplier back to active in bulk ─────────────────────
 UPDATE dbo.Suppliers
 SET [status] = 'active'
 WHERE is_deleted = 0
   AND [status]   = 'archived';
-
 GO
 
--- ============================================================
---  6.  SOFT DELETE
--- ============================================================
-
--- Soft-delete all visible rows in current tab (Java passes tab as ?)
+-- ── 6a. SOFT DELETE: Remove all visible rows matching the current tab's status ─────────────────
+-- Param: status (the tab currently open in the UI)
 UPDATE dbo.Suppliers
 SET is_deleted = 1
 WHERE is_deleted = 0
   AND [status]   = ?;
-
 GO
 
--- Soft-delete a single supplier
--- Junction rows in Supplier_Ingredients are NOT deleted —
--- they become unreachable via the LEFT JOIN filter but are
--- preserved in case the row is ever hard-restored manually.
+-- ── 6b. SOFT DELETE: Remove a single supplier; junction rows left intact (unreachable via view) ─
 UPDATE dbo.Suppliers
 SET is_deleted = 1
 WHERE supplier_id = ?;
-
 GO
 
--- ============================================================
---  7.  EXPORT HELPER — full flat row for CSV
--- ============================================================
-
+-- ── 7. EXPORT: Full flat row including status for CSV export ─────────────────────────────────────
 SELECT
     supplier_id,
     supplier_name,
@@ -224,5 +146,4 @@ SELECT
 FROM  dbo.vw_Suppliers
 WHERE is_deleted = 0
 ORDER BY supplier_name ASC;
-
 GO

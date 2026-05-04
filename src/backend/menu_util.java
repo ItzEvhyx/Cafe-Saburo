@@ -10,77 +10,77 @@ import java.util.UUID;
 public class menu_util {
 
     // ══════════════════════════════════════════════════════
-    //  MENU DATA — { name, priceSmall, priceLarge, hasCupSize }
+    //  MENU DATA — { name, priceSmall, priceLarge, hasCupSize, imagePath }
     // ══════════════════════════════════════════════════════
     public static final String[][] ESPRESSO = {
-        { "Americano",  "₱100", "₱105", "true"  },
-        { "Cafe Latte", "₱120", "₱125", "true"  },
-        { "Cafe Mocha", "₱140", "₱140", "false" },
-        { "Cappuccino", "₱120", "₱125", "true"  },
+        { "Americano",  "₱100", "₱105", "true",  "assets/menu_items/americano_img.png"  },
+        { "Cafe Latte", "₱120", "₱125", "true",  "assets/menu_items/cafelatte_img.png"  },
+        { "Cafe Mocha", "₱140", "₱140", "false", "assets/menu_items/cafemocha_img.png"  },
+        { "Cappuccino", "₱120", "₱125", "true",  "assets/menu_items/cappuccino_img.png" },
     };
     public static final String[][] SPECIALTY = {
-        { "Banoffee ★",              "₱190", "", "false" },
-        { "Biscoff Cream Latte ★",   "₱195", "", "false" },
-        { "Biscoff Cold Foam Latte", "₱195", "", "false" },
-        { "Creme Brulee Latte",      "₱170", "", "false" },
-        { "Lavender Latte",          "₱170", "", "false" },
-        { "Pistachio Latte ★",       "₱190", "", "false" },
-        { "Pumpkin Spice Latte",     "₱170", "", "false" },
-        { "Sakura Cloud Latte",      "₱170", "", "false" },
-        { "Smores Latte",            "₱170", "", "false" },
-        { "Tiramisu Latte",          "₱170", "", "false" },
-        { "Signature Drink ★",       "₱200", "", "false" },
+        { "Banoffee ★",              "₱190", "", "false", "assets/menu_items/banoffee_img.png"           },
+        { "Biscoff Cream Latte ★",   "₱195", "", "false", "assets/menu_items/biscoffcreamlatte_img.png"  },
+        { "Biscoff Cold Foam Latte", "₱195", "", "false", "assets/menu_items/biscoffcoldfoamlatte_img.png"},
+        { "Creme Brulee Latte",      "₱170", "", "false", "assets/menu_items/cremebruleelatte_img.png"   },
+        { "Lavender Latte",          "₱170", "", "false", "assets/menu_items/lavenderlatte_img.png"      },
+        { "Pistachio Latte ★",       "₱190", "", "false", "assets/menu_items/pistachiolatte_img.png"     },
+        { "Pumpkin Spice Latte",     "₱170", "", "false", "assets/menu_items/pumpkinspicelatte_img.png"  },
+        { "Sakura Cloud Latte",      "₱170", "", "false", "assets/menu_items/sakuracloudlatte_img.png"   },
+        { "Smores Latte",            "₱170", "", "false", "assets/menu_items/smoreslatte_img.png"        },
+        { "Tiramisu Latte",          "₱170", "", "false", "assets/menu_items/tiramisulatte_img.png"      },
+        { "Signature Drink ★",       "₱200", "", "false", "assets/menu_items/signaturedrink_img.png"     },
     };
     public static final String[][] ICED_COFFEE = {
-        { "Butterscotch Latte ★", "₱150", "", "false" },
-        { "Caramel Latte",        "₱150", "", "false" },
-        { "Caramel Macchiato",    "₱150", "", "false" },
-        { "Hazelnut Latte",       "₱150", "", "false" },
-        { "Irish Cream Latte ★",  "₱150", "", "false" },
-        { "Mocha Latte",          "₱150", "", "false" },
-        { "Spanish Latte ★",      "₱150", "", "false" },
-        { "Vanilla Latte",        "₱150", "", "false" },
-        { "White Mocha Latte",    "₱150", "", "false" },
+        { "Butterscotch Latte ★", "₱150", "", "false", "assets/menu_items/butterscotchlatte_img.png"  },
+        { "Caramel Latte",        "₱150", "", "false", "assets/menu_items/caramellatte_img.png"       },
+        { "Caramel Macchiato",    "₱150", "", "false", "assets/menu_items/caramelmacchiato_img.png"   },
+        { "Hazelnut Latte",       "₱150", "", "false", "assets/menu_items/hazelnutlatte_img.png"      },
+        { "Irish Cream Latte ★",  "₱150", "", "false", "assets/menu_items/irishcreamlatte_img.png"    },
+        { "Mocha Latte",          "₱150", "", "false", "assets/menu_items/mochalatte_img.png"         },
+        { "Spanish Latte ★",      "₱150", "", "false", "assets/menu_items/spanishlatte_img.png"       },
+        { "Vanilla Latte",        "₱150", "", "false", "assets/menu_items/vanilalatte_img.png"        },
+        { "White Mocha Latte",    "₱150", "", "false", "assets/menu_items/whitemochalatte_img.png"    },
     };
     public static final String[][] FRAPPE = {
-        { "Coffee Caramel", "₱160", "", "false" },
-        { "Dark Mocha",     "₱160", "", "false" },
-        { "Pecan Praline",  "₱160", "", "false" },
-        { "White Mocha",    "₱160", "", "false" },
+        { "Coffee Caramel", "₱160", "", "false", "assets/menu_items/coffeecaramel_img.png" },
+        { "Dark Mocha",     "₱160", "", "false", "assets/menu_items/darkmocha_img.png"     },
+        { "Pecan Praline",  "₱160", "", "false", "assets/menu_items/pecanpraline_img.png"  },
+        { "White Mocha",    "₱160", "", "false", "assets/menu_items/whitemocha_img.png"    },
     };
     public static final String[][] MATCHA = {
-        { "Agave Matcha Latte ★",     "₱180", "", "false" },
-        { "Banana Matcha ★",          "₱190", "", "false" },
-        { "Blueberry Matcha",         "₱190", "", "false" },
-        { "Dirty Matcha",             "₱190", "", "false" },
-        { "Ichigo Matcha Latte",      "₱170", "", "false" },
-        { "Lavender Matcha Latte",    "₱170", "", "false" },
-        { "Mango Matcha",             "₱190", "", "false" },
-        { "Matcha Latte ★",           "₱170", "", "false" },
-        { "Matcha Pistachio Latte ★", "₱200", "", "false" },
-        { "Strawberry Matcha Latte",  "₱190", "", "false" },
-        { "Oreo Matcha",              "₱190", "", "false" },
-        { "Premium Hojicha",          "₱180", "", "false" },
-        { "Kinako Hojicha ★",         "₱200", "", "false" },
+        { "Agave Matcha Latte ★",     "₱180", "", "false", "assets/menu_items/agavematchalatte_img.png"     },
+        { "Banana Matcha ★",          "₱190", "", "false", "assets/menu_items/bananamatcha_img.png"         },
+        { "Blueberry Matcha",         "₱190", "", "false", "assets/menu_items/blueberrymatcha_img.png"      },
+        { "Dirty Matcha",             "₱190", "", "false", "assets/menu_items/dirtymatcha_img.png"          },
+        { "Ichigo Matcha Latte",      "₱170", "", "false", "assets/menu_items/ichigomatchalatte_img.png"    },
+        { "Lavender Matcha Latte",    "₱170", "", "false", "assets/menu_items/lavendermatchalatte_img.png"  },
+        { "Mango Matcha",             "₱190", "", "false", "assets/menu_items/mangomatcha_img.png"          },
+        { "Matcha Latte ★",           "₱170", "", "false", "assets/menu_items/matchalatte_img.png"          },
+        { "Matcha Pistachio Latte ★", "₱200", "", "false", "assets/menu_items/matchapistachiolatte_img.png" },
+        { "Strawberry Matcha Latte",  "₱190", "", "false", "assets/menu_items/strawberrymatchalatte_img.png"},
+        { "Oreo Matcha",              "₱190", "", "false", "assets/menu_items/oreomatcha_img.png"           },
+        { "Premium Hojicha",          "₱180", "", "false", "assets/menu_items/premiumhojicha_img.png"       },
+        { "Kinako Hojicha ★",         "₱200", "", "false", "assets/menu_items/kinakohojicha_img.png"        },
     };
     public static final String[][] SMOOTHIE = {
-        { "Biscoff ★",             "₱190", "", "false" },
-        { "Blueberry Cheesecake",  "₱170", "", "false" },
-        { "Matcha",                "₱180", "", "false" },
-        { "Oreo Frappuccino",      "₱170", "", "false" },
-        { "Strawberry",            "₱160", "", "false" },
-        { "Strawberry Cheesecake", "₱170", "", "false" },
+        { "Biscoff ★",             "₱190", "", "false", "assets/menu_items/biscoffsmoothie_img.png"           },
+        { "Blueberry Cheesecake",  "₱170", "", "false", "assets/menu_items/blueberrycheesecakesmoothie_img.png"},
+        { "Matcha",                "₱180", "", "false", "assets/menu_items/matchasmoothie_img.png"             },
+        { "Oreo Frappuccino",      "₱170", "", "false", "assets/menu_items/oreofrappucinosmoothie_img.png"     },
+        { "Strawberry",            "₱160", "", "false", "assets/menu_items/strawberrysmoothie_img.png"         },
+        { "Strawberry Cheesecake", "₱170", "", "false", "assets/menu_items/strawberrycheesecakesmoothie_img.png"},
     };
     public static final String[][] REFRESHER = {
-        { "Four Red Fruits Tea ★", "₱125", "", "false" },
-        { "Kiwi Green Apple Tea",  "₱125", "", "false" },
-        { "Passion Fruit Tea",     "₱125", "", "false" },
-        { "Pomegranate Lemon Tea", "₱125", "", "false" },
-        { "Wild Berry Tea",        "₱125", "", "false" },
+        { "Four Red Fruits Tea ★", "₱125", "", "false", "assets/menu_items/fourredfruitsea_img.png"      },
+        { "Kiwi Green Apple Tea",  "₱125", "", "false", "assets/menu_items/kiwigreenappletea_img.png"    },
+        { "Passion Fruit Tea",     "₱125", "", "false", "assets/menu_items/passionfruittea_img.png"      },
+        { "Pomegranate Lemon Tea", "₱125", "", "false", "assets/menu_items/pomegranatelemontea_img.png"  },
+        { "Wild Berry Tea",        "₱125", "", "false", "assets/menu_items/wildberrytea_img.png"         },
     };
     public static final String[][] ADD_ONS = {
-        { "Espresso Shot", "₱30", "", "false" },
-        { "Sub Oat",       "₱30", "", "false" },
+        { "Espresso Shot", "₱30", "", "false", "assets/menu_items/espressoshot_img.png" },
+        { "Sub Oat",       "₱30", "", "false", "assets/menu_items/suboat_img.png"       },
     };
 
     public static final String[] CATEGORY_NAMES = {
@@ -95,6 +95,11 @@ public class menu_util {
         null, "Espresso", "Specialty Coffee", "Iced Coffee",
         "Frappe", "Matcha Series", "Smoothie", "Refresher", "Add-ons"
     };
+
+    // ══════════════════════════════════════════════════════
+    //  IMAGE INDEX — column index of the image path in each row
+    // ══════════════════════════════════════════════════════
+    public static final int COL_IMAGE = 4;
 
     // ══════════════════════════════════════════════════════
     //  SUBMIT RESULT

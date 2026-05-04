@@ -36,13 +36,14 @@ public class auth_ui {
     // ══════════════════════════════════════════════════════
     //  FONT LOADER
     // ══════════════════════════════════════════════════════
-    private static final Font ALEO_BOLD_ITALIC = Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 34);
-    private static final Font ALEO_BOLD        = Font.loadFont("file:assets/fonts/Aleo-Bold.ttf",       16);
-    private static final Font ALEO_SEMIBOLD    = Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf",   15);
-    private static final Font ALEO_MEDIUM      = Font.loadFont("file:assets/fonts/Aleo-Medium.ttf",     14);
-    private static final Font ALEO_REGULAR     = Font.loadFont("file:assets/fonts/Aleo-Regular.ttf",    15);
-    private static final Font ALEO_LIGHT       = Font.loadFont("file:assets/fonts/Aleo-Light.ttf",      12);
-    private static final Font ALEO_ITALIC      = Font.loadFont("file:assets/fonts/Aleo-Italic.ttf",     13);
+    private static final Font ALEO_BOLD_ITALIC  = Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf",   34);
+    private static final Font ALEO_EXTRA_BOLD   = Font.loadFont("file:assets/fonts/Aleo-ExtraBold.ttf",    44);
+    private static final Font ALEO_BOLD         = Font.loadFont("file:assets/fonts/Aleo-Bold.ttf",         16);
+    private static final Font ALEO_SEMIBOLD     = Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf",     15);
+    private static final Font ALEO_MEDIUM       = Font.loadFont("file:assets/fonts/Aleo-Medium.ttf",       14);
+    private static final Font ALEO_REGULAR      = Font.loadFont("file:assets/fonts/Aleo-Regular.ttf",      15);
+    private static final Font ALEO_LIGHT        = Font.loadFont("file:assets/fonts/Aleo-Light.ttf",        12);
+    private static final Font ALEO_ITALIC       = Font.loadFont("file:assets/fonts/Aleo-Italic.ttf",       13);
 
     public void start(Stage stage) {
 
@@ -53,6 +54,15 @@ public class auth_ui {
         background.setFitWidth(screenW);
         background.setFitHeight(screenH);
         background.setPreserveRatio(false);
+
+        // ══════════════════════════════════════════════════
+        //  SET CUSTOM WINDOW ICON
+        // ══════════════════════════════════════════════════
+        try {
+            stage.getIcons().add(new Image("file:assets/cafe_logo.png"));
+        } catch (Exception e) {
+            System.err.println("Warning: Could not load cafe_logo.png for window icon: " + e.getMessage());
+        }
 
         // ══════════════════════════════════════════════════
         //  TOGGLE BAR  (Employee / Manager)
@@ -80,28 +90,25 @@ public class auth_ui {
         //  EMPLOYEE PANEL  — name + shift date, DB lookup
         // ══════════════════════════════════════════════════
         Label empTitle = panelTitle("Time - in");
-        VBox.setMargin(empTitle, new Insets(4, 0, 8, 0));
+        VBox.setMargin(empTitle, new Insets(4, 0, 4, 0));
 
-        Label empSubtitle = new Label("Enter your name exactly as registered to clock in.");
-        empSubtitle.setTextFill(Color.web("#e8b4b8"));
-        empSubtitle.setFont(Font.loadFont("file:assets/fonts/Aleo-Italic.ttf", 12));
-        empSubtitle.setWrapText(true);
-        empSubtitle.setMaxWidth(Double.MAX_VALUE);
-        VBox.setMargin(empSubtitle, new Insets(-6, 0, 4, 2));
+        // ── Employee icon ─────────────────────────────────
+        ImageView empIcon = loadIcon("file:assets/icons/employee_signin_icon.png", 120);
+        VBox.setMargin(empIcon, new Insets(0, 0, 8, 0));
 
-        TextField empNameField = styledField("Enter your full name");
+        // ── Name label + field ────────────────────────────
+        Label empNameLabel = fieldLabel("Enter your name exactly as registered to clock in.");
+        empNameLabel.setFont(Font.loadFont("file:assets/fonts/Aleo-Italic.ttf", 12));
+        empNameLabel.setWrapText(true);
+        empNameLabel.setMaxWidth(Double.MAX_VALUE);
+
+        TextField empNameField = styledField("Full name");
         empNameField.setMaxWidth(Double.MAX_VALUE);
 
         // ── Shift Date label ──────────────────────────────
-        Label shiftDateLabel = new Label("Shift Date");
-        shiftDateLabel.setTextFill(Color.web("#e8b4b8"));
-        shiftDateLabel.setFont(Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf", 13));
-        VBox.setMargin(shiftDateLabel, new Insets(4, 0, 0, 2));
+        Label shiftDateLabel = fieldLabel("Shift Date:");
 
         // ── Month dropdown ────────────────────────────────
-        // Only show months from today onward (current month + up to 2 future months
-        // is reasonable for scheduling; we keep the full list but disable past days
-        // via the day/year constraint logic below).
         ComboBox<String> monthBox = new ComboBox<>();
         monthBox.getItems().addAll(
             "January", "February", "March", "April", "May", "June",
@@ -122,7 +129,6 @@ public class auth_ui {
         // ── Year dropdown ─────────────────────────────────
         ComboBox<Integer> yearBox = new ComboBox<>();
         int currentYear = LocalDate.now().getYear();
-        // Only current year and next year — past years make no sense for clocking in
         yearBox.getItems().add(currentYear);
         yearBox.getItems().add(currentYear + 1);
         yearBox.setPromptText("Year");
@@ -154,11 +160,14 @@ public class auth_ui {
         dateRow.setMaxWidth(Double.MAX_VALUE);
 
         Label empError    = errorLabel();
-        Button empConfirm = confirmButton("Time In");
+        Button empConfirm = confirmButton("Confirm");
         empNameField.setOnAction(e -> empConfirm.fire());
+        VBox.setMargin(empConfirm, new Insets(-4, 0, 0, 0));
 
-        VBox employeePanel = new VBox(12,
-            empTitle, empSubtitle,
+        VBox employeePanel = new VBox(8,
+            empTitle,
+            centeredIcon(empIcon),
+            empNameLabel,
             empNameField,
             shiftDateLabel,
             dateRow,
@@ -172,18 +181,28 @@ public class auth_ui {
         //  MANAGER PANEL  — hardcoded credentials
         // ══════════════════════════════════════════════════
         Label mgrTitle = panelTitle("Log - in");
-        VBox.setMargin(mgrTitle, new Insets(4, 0, 8, 0));
+        VBox.setMargin(mgrTitle, new Insets(4, 0, 4, 0));
 
-        TextField mgrNameField = styledField("Enter Name");
+        // ── Manager icon ──────────────────────────────────
+        ImageView mgrIcon = loadIcon("file:assets/icons/manager_signin_icon.png", 120);
+        VBox.setMargin(mgrIcon, new Insets(0, 0, 8, 0));
+
+        // ── Name label + field ────────────────────────────
+        Label mgrNameLabel = fieldLabel("Enter Name:");
+
+        TextField mgrNameField = styledField("Full name");
         mgrNameField.setMaxWidth(Double.MAX_VALUE);
 
+        // ── Password label + field ────────────────────────
+        Label mgrPassLabel = fieldLabel("Enter Password:");
+
         PasswordField mgrPassHidden = new PasswordField();
-        mgrPassHidden.setPromptText("Enter Password");
+        mgrPassHidden.setPromptText("Password");
         styleFieldBase(mgrPassHidden);
         mgrPassHidden.setMaxWidth(Double.MAX_VALUE);
 
         TextField mgrPassVisible = new TextField();
-        mgrPassVisible.setPromptText("Enter Password");
+        mgrPassVisible.setPromptText("Password");
         styleFieldBase(mgrPassVisible);
         mgrPassVisible.setMaxWidth(Double.MAX_VALUE);
         mgrPassVisible.setVisible(false);
@@ -235,8 +254,18 @@ public class auth_ui {
         Button mgrConfirm = confirmButton("Log In");
         mgrPassHidden.setOnAction(e  -> mgrConfirm.fire());
         mgrPassVisible.setOnAction(e -> mgrConfirm.fire());
+        VBox.setMargin(mgrConfirm, new Insets(-4, 0, 0, 0));
 
-        VBox managerPanel = new VBox(12, mgrTitle, mgrNameField, passStack, mgrError, mgrConfirm);
+        VBox managerPanel = new VBox(8,
+            mgrTitle,
+            centeredIcon(mgrIcon),
+            mgrNameLabel,
+            mgrNameField,
+            mgrPassLabel,
+            passStack,
+            mgrError,
+            mgrConfirm
+        );
         managerPanel.setAlignment(Pos.CENTER_LEFT);
         managerPanel.setMaxWidth(Double.MAX_VALUE);
 
@@ -275,7 +304,6 @@ public class auth_ui {
         overlayBackdrop.setVisible(false);
         overlayBackdrop.setMouseTransparent(false);
 
-        // Modal card
         VBox modalCard = new VBox(20);
         modalCard.setAlignment(Pos.CENTER);
         modalCard.setPadding(new Insets(48, 64, 48, 64));
@@ -350,12 +378,9 @@ public class auth_ui {
                 return;
             }
 
-            // Build the LocalDate from the picker selections
-            int monthIdx = monthBox.getSelectionModel().getSelectedIndex() + 1; // 1-based
+            int monthIdx = monthBox.getSelectionModel().getSelectedIndex() + 1;
             LocalDate shiftDate = LocalDate.of(selYear, monthIdx, selDay);
 
-            // Sanity: date must not be in the past (UI should prevent this,
-            // but guard here too in case of edge cases)
             if (shiftDate.isBefore(LocalDate.now())) {
                 empError.setText("Shift date cannot be in the past.");
                 empError.setVisible(true);
@@ -376,7 +401,6 @@ public class auth_ui {
             }
         });
 
-        // overlayBackdrop must be last child so it renders on top
         Pane root = new Pane();
         root.getChildren().addAll(background, container, overlayBackdrop);
 
@@ -403,26 +427,16 @@ public class auth_ui {
     // ══════════════════════════════════════════════════════
     //  DAY POPULATOR — only today and future days
     // ══════════════════════════════════════════════════════
-
-    /**
-     * Populates dayBox with valid days for the given month/year.
-     * Past days are excluded (only today and future).
-     * If the selected month/year is in the future, all days are shown.
-     */
     private void populateDaysFromToday(ComboBox<Integer> dayBox, int month, int year) {
         Integer prev = dayBox.getValue();
         int daysInMonth = YearMonth.of(year, month).lengthOfMonth();
 
         LocalDate today = LocalDate.now();
-        // First valid day: if month/year == today's month/year → today's day; otherwise 1
         int firstDay = 1;
         if (year == today.getYear() && month == today.getMonthValue()) {
             firstDay = today.getDayOfMonth();
         } else if (year < today.getYear() ||
                    (year == today.getYear() && month < today.getMonthValue())) {
-            // This is a past month — no valid days to show.
-            // Clear and return; the UI month/year pickers shouldn't allow this,
-            // but we handle it defensively.
             dayBox.getItems().clear();
             return;
         }
@@ -432,7 +446,6 @@ public class auth_ui {
             dayBox.getItems().add(d);
         }
 
-        // Re-select previously chosen day if still valid
         if (prev != null && prev >= firstDay && prev <= daysInMonth) {
             dayBox.getSelectionModel().select(prev);
         } else {
@@ -453,21 +466,48 @@ public class auth_ui {
     // ══════════════════════════════════════════════════════
     //  UI HELPERS
     // ══════════════════════════════════════════════════════
+
+    /** Loads an icon ImageView. Wrap with centeredIcon() for display. */
+    private ImageView loadIcon(String path, double size) {
+        ImageView iv = new ImageView();
+        try {
+            iv.setImage(new Image(path, size, size, true, true));
+        } catch (Exception ignored) { /* icon won't show if file missing */ }
+        iv.setFitWidth(size);
+        iv.setFitHeight(size);
+        iv.setPreserveRatio(true);
+        return iv;
+    }
+
+    /** Wraps an ImageView in a full-width HBox so it appears centered. */
+    private HBox centeredIcon(ImageView iv) {
+        HBox box = new HBox(iv);
+        box.setAlignment(Pos.CENTER);
+        box.setMaxWidth(Double.MAX_VALUE);
+        return box;
+    }
+
     private Label panelTitle(String text) {
         Label lbl = new Label(text);
-        lbl.setFont(Font.loadFont("file:assets/fonts/Aleo-BoldItalic.ttf", 44));
-        lbl.setTextFill(Color.web("#68222A"));
+        lbl.setFont(Font.loadFont("file:assets/fonts/Aleo-ExtraBold.ttf", 44));
+        lbl.setTextFill(Color.WHITE);
         lbl.setStyle(
             "-fx-font-size: 44px;" +
-            "-fx-text-fill: #68222A;" +
-            "-fx-effect: dropshadow(gaussian, white, 1, 1, -1, -1)," +
-                        "dropshadow(gaussian, white, 1, 1,  1, -1)," +
-                        "dropshadow(gaussian, white, 1, 1, -1,  1)," +
-                        "dropshadow(gaussian, white, 1, 1,  1,  1)," +
-                        "dropshadow(gaussian, white, 2, 0.8, 0,  0);"
+            "-fx-text-fill: white;" +
+            "-fx-font-weight: 800;"
         );
         lbl.setAlignment(Pos.CENTER);
         lbl.setMaxWidth(Double.MAX_VALUE);
+        return lbl;
+    }
+
+    private Label fieldLabel(String text) {
+        Label lbl = new Label(text);
+        lbl.setTextFill(Color.web("#e8b4b8"));
+        lbl.setFont(Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf", 13));
+        lbl.setWrapText(true);
+        lbl.setMaxWidth(Double.MAX_VALUE);
+        VBox.setMargin(lbl, new Insets(4, 0, 0, 2));
         return lbl;
     }
 

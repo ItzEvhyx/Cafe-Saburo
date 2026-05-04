@@ -23,6 +23,7 @@ import javafx.scene.text.Font;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
+import java.io.File;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,7 +124,7 @@ public class menu_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  MAIN AREA  ← search wired here
+    //  MAIN AREA
     // ══════════════════════════════════════════════════════
     private Pane buildMainArea(double mainW) {
         Pane area = new Pane();
@@ -174,28 +175,24 @@ public class menu_contents {
             "-fx-border-radius: 20;"
         );
 
-        // ── Build sections + track their raw item data ────
-        // sectionNodes[i] pairs: { VBox (the section node), FlowPane (its grid) }
-        // We also keep the raw item names per section for filtering.
         double filterY = TOP_PADDING + HEADER_H + 4;
 
-        // sectionNodes — the full VBox for each category section (index 0 = Espresso etc.)
-        List<VBox>      sectionNodes    = new ArrayList<>();
-        // sectionGrids  — the FlowPane inside each section so we can show/hide individual cards
-        List<FlowPane>  sectionGrids    = new ArrayList<>();
-        // sectionItems  — raw item data mirroring CATEGORY_DATA[1..n]
-        List<String[][]> sectionItems   = new ArrayList<>();
+        List<VBox>       sectionNodes  = new ArrayList<>();
+        List<FlowPane>   sectionGrids  = new ArrayList<>();
+        List<String[][]> sectionItems  = new ArrayList<>();
 
         for (int i = 1; i < menu_util.CATEGORY_NAMES.length; i++) {
-            String[][]  data    = menu_util.CATEGORY_DATA[i];
-            String      title   = menu_util.SECTION_TITLES[i];
+            String[][]  data  = menu_util.CATEGORY_DATA[i];
+            String      title = menu_util.SECTION_TITLES[i];
 
             double wrapLen = 4 * CARD_W + 3 * CARD_GAP + 2;
             FlowPane grid = new FlowPane(CARD_GAP, CARD_GAP);
             grid.setPrefWrapLength(wrapLen);
             for (String[] item : data)
                 grid.getChildren().add(
-                    buildMenuCard(item[0], item[1], item[2], Boolean.parseBoolean(item[3]))
+                    buildMenuCard(item[0], item[1], item[2],
+                                  Boolean.parseBoolean(item[3]),
+                                  item.length > 4 ? item[4] : null)
                 );
 
             VBox section = new VBox(12);
@@ -242,31 +239,30 @@ public class menu_contents {
             pill.setOnMouseEntered(e -> { if (activePillIdx[0] != idx) pill.setStyle(pillStyle(true, false)); });
             pill.setOnMouseExited(e  -> { if (activePillIdx[0] != idx) pill.setStyle(pillStyle(false, false)); });
             pill.setOnMouseClicked(e -> {
-                // Clear search when switching pill
                 searchField.clear();
-
                 pills.get(activePillIdx[0]).setStyle(pillStyle(false, false));
                 activePillIdx[0] = idx;
                 pill.setStyle(pillStyle(false, true));
                 allSections.getChildren().clear();
                 gridScroll.setVvalue(0);
                 if (idx == 0) {
-                    // Restore all cards to full visibility before showing all sections
                     for (int s = 0; s < sectionGrids.size(); s++) {
-                        FlowPane   grid    = sectionGrids.get(s);
-                        String[][] data    = sectionItems.get(s);
-                        for (int c = 0; c < grid.getChildren().size(); c++)
+                        FlowPane   grid = sectionGrids.get(s);
+                        for (int c = 0; c < grid.getChildren().size(); c++) {
                             grid.getChildren().get(c).setVisible(true);
+                            grid.getChildren().get(c).setManaged(true);
+                        }
                         sectionNodes.get(s).setVisible(true);
                         sectionNodes.get(s).setManaged(true);
                     }
                     allSections.getChildren().addAll(sectionNodes);
                 } else {
-                    // Show only the chosen section, all cards visible
-                    VBox   chosen = sectionNodes.get(idx - 1);
-                    FlowPane grd  = sectionGrids.get(idx - 1);
-                    for (int c = 0; c < grd.getChildren().size(); c++)
+                    VBox     chosen = sectionNodes.get(idx - 1);
+                    FlowPane grd    = sectionGrids.get(idx - 1);
+                    for (int c = 0; c < grd.getChildren().size(); c++) {
                         grd.getChildren().get(c).setVisible(true);
+                        grd.getChildren().get(c).setManaged(true);
+                    }
                     chosen.setVisible(true);
                     chosen.setManaged(true);
                     allSections.getChildren().add(chosen);
@@ -295,7 +291,6 @@ public class menu_contents {
         searchField.textProperty().addListener((obs, oldVal, newVal) -> {
             String query = newVal == null ? "" : newVal.trim().toLowerCase();
 
-            // Reset pill to "All" when the user starts typing
             if (!query.isEmpty() && activePillIdx[0] != 0) {
                 pills.get(activePillIdx[0]).setStyle(pillStyle(false, false));
                 activePillIdx[0] = 0;
@@ -306,11 +301,12 @@ public class menu_contents {
             gridScroll.setVvalue(0);
 
             if (query.isEmpty()) {
-                // Restore everything
                 for (int s = 0; s < sectionNodes.size(); s++) {
-                    FlowPane   grid = sectionGrids.get(s);
-                    for (int c = 0; c < grid.getChildren().size(); c++)
+                    FlowPane grid = sectionGrids.get(s);
+                    for (int c = 0; c < grid.getChildren().size(); c++) {
                         grid.getChildren().get(c).setVisible(true);
+                        grid.getChildren().get(c).setManaged(true);
+                    }
                     sectionNodes.get(s).setVisible(true);
                     sectionNodes.get(s).setManaged(true);
                 }
@@ -318,21 +314,19 @@ public class menu_contents {
                 return;
             }
 
-            // Filter: show only cards whose name contains the query
             for (int s = 0; s < sectionNodes.size(); s++) {
                 FlowPane   grid = sectionGrids.get(s);
                 String[][] data = sectionItems.get(s);
-                boolean    anyVisible = false;
+                boolean anyVisible = false;
 
                 for (int c = 0; c < grid.getChildren().size(); c++) {
-                    String itemName = data[c][0].toLowerCase();
-                    boolean matches = itemName.contains(query);
+                    String  itemName = data[c][0].toLowerCase();
+                    boolean matches  = itemName.contains(query);
                     grid.getChildren().get(c).setVisible(matches);
                     grid.getChildren().get(c).setManaged(matches);
                     if (matches) anyVisible = true;
                 }
 
-                // Hide the whole section (header + grid) if no cards match
                 sectionNodes.get(s).setVisible(anyVisible);
                 sectionNodes.get(s).setManaged(anyVisible);
                 if (anyVisible) allSections.getChildren().add(sectionNodes.get(s));
@@ -618,122 +612,118 @@ public class menu_contents {
         refreshOrderList();
     }
 
- 
-//  INSUFFICIENT PAYMENT MODAL
-// ══════════════════════════════════════════════════════
-private static final double MODAL_W = 440;
-private static final double MODAL_H = 310;
+    // ══════════════════════════════════════════════════════
+    //  INSUFFICIENT PAYMENT MODAL
+    // ══════════════════════════════════════════════════════
+    private static final double MODAL_W = 440;
+    private static final double MODAL_H = 310;
 
-private void showInsufficientModal(double paid, double total, double needed) {
-    Pane overlay = new Pane();
-    overlay.setPrefWidth(totalW);  overlay.setMinWidth(totalW);  overlay.setMaxWidth(totalW);
-    overlay.setPrefHeight(totalH); overlay.setMinHeight(totalH); overlay.setMaxHeight(totalH);
-    overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
+    private void showInsufficientModal(double paid, double total, double needed) {
+        Pane overlay = new Pane();
+        overlay.setPrefWidth(totalW);  overlay.setMinWidth(totalW);  overlay.setMaxWidth(totalW);
+        overlay.setPrefHeight(totalH); overlay.setMinHeight(totalH); overlay.setMaxHeight(totalH);
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
-    VBox card = new VBox(0);
-    card.setAlignment(Pos.TOP_LEFT);
-    card.setMinWidth(MODAL_W);  card.setMaxWidth(MODAL_W);  card.setPrefWidth(MODAL_W);
-    card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H); card.setPrefHeight(MODAL_H);
-    card.setStyle(
-        "-fx-background-color: white;" +
-        "-fx-background-radius: 14;" +
-        "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
-    );
+        VBox card = new VBox(0);
+        card.setAlignment(Pos.TOP_LEFT);
+        card.setMinWidth(MODAL_W);  card.setMaxWidth(MODAL_W);  card.setPrefWidth(MODAL_W);
+        card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H); card.setPrefHeight(MODAL_H);
+        card.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 14;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
+        );
 
-    // ── Modal header ──────────────────────────────────
-    HBox cardHeader = new HBox(10);
-    cardHeader.setPadding(new Insets(20, 24, 16, 24));
-    cardHeader.setAlignment(Pos.CENTER_LEFT);
-    cardHeader.setStyle(
-        "-fx-background-color: #F5E8EA;" +
-        "-fx-background-radius: 14 14 0 0;" +
-        "-fx-border-color: transparent transparent #882F39 transparent;" +
-        "-fx-border-width: 0 0 1.5 0;"
-    );
+        HBox cardHeader = new HBox(10);
+        cardHeader.setPadding(new Insets(20, 24, 16, 24));
+        cardHeader.setAlignment(Pos.CENTER_LEFT);
+        cardHeader.setStyle(
+            "-fx-background-color: #F5E8EA;" +
+            "-fx-background-radius: 14 14 0 0;" +
+            "-fx-border-color: transparent transparent #882F39 transparent;" +
+            "-fx-border-width: 0 0 1.5 0;"
+        );
 
-    FontIcon warnIcon = new FontIcon(FontAwesomeSolid.EXCLAMATION_CIRCLE);
-    warnIcon.setIconSize(17);
-    warnIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+        FontIcon warnIcon = new FontIcon(FontAwesomeSolid.EXCLAMATION_CIRCLE);
+        warnIcon.setIconSize(17);
+        warnIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
 
-    Label heading = new Label("Insufficient Amount!");
-    heading.setStyle(
-        "-fx-font-family: '" + FONT_FAMILY + "';" +
-        "-fx-font-size: 20px;" +
-        "-fx-font-weight: 800;" +
-        "-fx-text-fill: " + ACCENT + ";"
-    );
+        Label heading = new Label("Insufficient Amount!");
+        heading.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 20px;" +
+            "-fx-font-weight: 800;" +
+            "-fx-text-fill: " + ACCENT + ";"
+        );
 
-    Region hSpacer = new Region();
-    HBox.setHgrow(hSpacer, Priority.ALWAYS);
+        Region hSpacer = new Region();
+        HBox.setHgrow(hSpacer, Priority.ALWAYS);
 
-    Label closeBtn = new Label();
-    FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
-    xIcon.setIconSize(13);
-    xIcon.setIconColor(javafx.scene.paint.Color.web("#555555"));
-    closeBtn.setGraphic(xIcon);
-    closeBtn.setCursor(javafx.scene.Cursor.HAND);
-    closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
-    closeBtn.setAlignment(Pos.CENTER);
-    closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;");
-    closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6; -fx-background-radius: 6;"));
-    closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;"));
-    closeBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+        Label closeBtn = new Label();
+        FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
+        xIcon.setIconSize(13);
+        xIcon.setIconColor(javafx.scene.paint.Color.web("#555555"));
+        closeBtn.setGraphic(xIcon);
+        closeBtn.setCursor(javafx.scene.Cursor.HAND);
+        closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
+        closeBtn.setAlignment(Pos.CENTER);
+        closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;");
+        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6; -fx-background-radius: 6;"));
+        closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;"));
+        closeBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+        cardHeader.getChildren().addAll(warnIcon, heading, hSpacer, closeBtn);
 
-    cardHeader.getChildren().addAll(warnIcon, heading, hSpacer, closeBtn);
+        VBox body = new VBox(10);
+        body.setPadding(new Insets(26, 40, 10, 40));
+        body.setAlignment(Pos.CENTER);
+        VBox.setVgrow(body, Priority.ALWAYS);
 
-    // ── Body ──────────────────────────────────────────
-    VBox body = new VBox(10);
-    body.setPadding(new Insets(26, 40, 10, 40));
-    body.setAlignment(Pos.CENTER);
-    VBox.setVgrow(body, Priority.ALWAYS);
+        Label detailPaid  = styledDetailLabel(String.format("Amount Paid:   ₱%.2f", paid));
+        Label detailTotal = styledDetailLabel(String.format("Order Total:     ₱%.2f", total));
 
-    Label detailPaid  = styledDetailLabel(String.format("Amount Paid:   ₱%.2f", paid));
-    Label detailTotal = styledDetailLabel(String.format("Order Total:     ₱%.2f", total));
+        Region sep = new Region();
+        sep.setPrefHeight(1.5);
+        sep.setMaxWidth(Double.MAX_VALUE);
+        sep.setStyle("-fx-background-color: rgba(136,47,57,0.25);");
+        VBox.setMargin(sep, new Insets(4, 0, 4, 0));
 
-    Region sep = new Region();
-    sep.setPrefHeight(1.5);
-    sep.setMaxWidth(Double.MAX_VALUE);
-    sep.setStyle("-fx-background-color: rgba(136,47,57,0.25);");
-    VBox.setMargin(sep, new Insets(4, 0, 4, 0));
+        Label detailNeeded = new Label(String.format("Please pay  ₱%.2f  more to submit.", needed));
+        detailNeeded.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 14px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: #721C24;" +
+            "-fx-text-alignment: center;"
+        );
+        detailNeeded.setAlignment(Pos.CENTER);
+        detailNeeded.setWrapText(true);
 
-    Label detailNeeded = new Label(String.format("Please pay  ₱%.2f  more to submit.", needed));
-    detailNeeded.setStyle(
-        "-fx-font-family: '" + FONT_FAMILY + "';" +
-        "-fx-font-size: 14px;" +
-        "-fx-font-weight: bold;" +
-        "-fx-text-fill: #721C24;" +
-        "-fx-text-alignment: center;"
-    );
-    detailNeeded.setAlignment(Pos.CENTER);
-    detailNeeded.setWrapText(true);
+        body.getChildren().addAll(detailPaid, detailTotal, sep, detailNeeded);
 
-    body.getChildren().addAll(detailPaid, detailTotal, sep, detailNeeded);
+        HBox footer = new HBox();
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.setPadding(new Insets(18, 28, 24, 28));
 
-    // ── Footer ────────────────────────────────────────
-    HBox footer = new HBox();
-    footer.setAlignment(Pos.CENTER_RIGHT);
-    footer.setPadding(new Insets(18, 28, 24, 28));
+        Label okBtn = new Label("OK, I'll update the amount");
+        okBtn.setCursor(javafx.scene.Cursor.HAND);
+        okBtn.setPrefWidth(200);
+        okBtn.setPrefHeight(38);
+        okBtn.setAlignment(Pos.CENTER);
+        okBtn.setStyle(modalOkBtnStyle(false));
+        okBtn.setOnMouseEntered(e -> okBtn.setStyle(modalOkBtnStyle(true)));
+        okBtn.setOnMouseExited(e  -> okBtn.setStyle(modalOkBtnStyle(false)));
+        okBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
 
-    Label okBtn = new Label("OK, I'll update the amount");
-    okBtn.setCursor(javafx.scene.Cursor.HAND);
-    okBtn.setPrefWidth(200);
-    okBtn.setPrefHeight(38);
-    okBtn.setAlignment(Pos.CENTER);
-    okBtn.setStyle(modalOkBtnStyle(false));
-    okBtn.setOnMouseEntered(e -> okBtn.setStyle(modalOkBtnStyle(true)));
-    okBtn.setOnMouseExited(e  -> okBtn.setStyle(modalOkBtnStyle(false)));
-    okBtn.setOnMouseClicked(e -> rootStack.getChildren().remove(overlay));
+        footer.getChildren().add(okBtn);
+        card.getChildren().addAll(cardHeader, body, footer);
 
-    footer.getChildren().add(okBtn);
-    card.getChildren().addAll(cardHeader, body, footer);
-
-    StackPane centred = new StackPane(card);
-    centred.setPrefWidth(totalW);  centred.setMinWidth(totalW);  centred.setMaxWidth(totalW);
-    centred.setPrefHeight(totalH); centred.setMinHeight(totalH); centred.setMaxHeight(totalH);
-    centred.setAlignment(Pos.CENTER);
-    overlay.getChildren().add(centred);
-    rootStack.getChildren().add(overlay);
-}
+        StackPane centred = new StackPane(card);
+        centred.setPrefWidth(totalW);  centred.setMinWidth(totalW);  centred.setMaxWidth(totalW);
+        centred.setPrefHeight(totalH); centred.setMinHeight(totalH); centred.setMaxHeight(totalH);
+        centred.setAlignment(Pos.CENTER);
+        overlay.getChildren().add(centred);
+        rootStack.getChildren().add(overlay);
+    }
 
     private Label styledDetailLabel(String text) {
         Label lbl = new Label(text);
@@ -904,7 +894,11 @@ private void showInsufficientModal(double paid, double total, double needed) {
         grid.setPrefWrapLength(wrapLen);
 
         for (String[] item : items)
-            grid.getChildren().add(buildMenuCard(item[0], item[1], item[2], Boolean.parseBoolean(item[3])));
+            grid.getChildren().add(
+                buildMenuCard(item[0], item[1], item[2],
+                              Boolean.parseBoolean(item[3]),
+                              item.length > 4 ? item[4] : null)
+            );
 
         section.getChildren().add(grid);
         return section;
@@ -939,34 +933,22 @@ private void showInsufficientModal(double paid, double total, double needed) {
         return row;
     }
 
-    private VBox buildMenuCard(String name, String priceS, String priceL, boolean hasCupSize) {
+    // ══════════════════════════════════════════════════════
+    //  MENU CARD  — loads real image from imagePath,
+    //              falls back to camera placeholder on error
+    // ══════════════════════════════════════════════════════
+    private VBox buildMenuCard(String name, String priceS, String priceL,
+                                boolean hasCupSize, String imagePath) {
         VBox card = new VBox(0);
         card.setPrefWidth(CARD_W);
         card.setPrefHeight(CARD_H);
         card.setStyle(CARD_STYLE_NORMAL);
         card.setCursor(javafx.scene.Cursor.HAND);
 
-        Region imgPlaceholder = new Region();
-        imgPlaceholder.setPrefWidth(CARD_W);
-        imgPlaceholder.setMinHeight(CARD_IMG_H);
-        imgPlaceholder.setPrefHeight(CARD_IMG_H);
-        imgPlaceholder.setMaxHeight(CARD_IMG_H);
-        imgPlaceholder.setStyle(
-            "-fx-background-color: #E8D5D8;" +
-            "-fx-background-radius: 14 14 0 0;"
-        );
+        // ── Image area ────────────────────────────────────
+        StackPane imgArea = buildCardImageArea(imagePath);
 
-        FontIcon camIcon = new FontIcon(FontAwesomeSolid.CAMERA);
-        camIcon.setIconSize(28);
-        camIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-        camIcon.setOpacity(0.4);
-
-        StackPane imgArea = new StackPane(imgPlaceholder, camIcon);
-        imgArea.setPrefWidth(CARD_W);
-        imgArea.setMinHeight(CARD_IMG_H);
-        imgArea.setPrefHeight(CARD_IMG_H);
-        imgArea.setMaxHeight(CARD_IMG_H);
-
+        // ── Info ──────────────────────────────────────────
         VBox info = new VBox(4);
         info.setPadding(new Insets(10, 12, 6, 12));
 
@@ -1041,6 +1023,72 @@ private void showInsufficientModal(double paid, double total, double needed) {
         return card;
     }
 
+    /**
+     * Builds the top image area of a menu card.
+     * Tries to load the image from imagePath; if the file doesn't exist
+     * or the load fails, falls back to the camera-icon placeholder.
+     */
+    private StackPane buildCardImageArea(String imagePath) {
+        // Rounded-top background (always present, acts as frame/fallback)
+        Region bgRegion = new Region();
+        bgRegion.setPrefWidth(CARD_W);
+        bgRegion.setMinHeight(CARD_IMG_H);
+        bgRegion.setPrefHeight(CARD_IMG_H);
+        bgRegion.setMaxHeight(CARD_IMG_H);
+        bgRegion.setStyle(
+            "-fx-background-color: #E8D5D8;" +
+            "-fx-background-radius: 14 14 0 0;"
+        );
+
+        StackPane imgArea = new StackPane(bgRegion);
+        imgArea.setPrefWidth(CARD_W);
+        imgArea.setMinHeight(CARD_IMG_H);
+        imgArea.setPrefHeight(CARD_IMG_H);
+        imgArea.setMaxHeight(CARD_IMG_H);
+
+        boolean loaded = false;
+
+        if (imagePath != null && !imagePath.isBlank()) {
+            try {
+                File f = new File(imagePath);
+                if (f.exists()) {
+                    Image img = new Image(f.toURI().toString(),
+                                         CARD_W, CARD_IMG_H,
+                                         false,   // preserve ratio — false so it fills the area
+                                         true);    // smooth
+                    if (!img.isError()) {
+                        ImageView iv = new ImageView(img);
+                        iv.setFitWidth(CARD_W);
+                        iv.setFitHeight(CARD_IMG_H);
+                        iv.setPreserveRatio(false);
+                        // Clip to rounded corners matching the card top
+                        javafx.scene.shape.Rectangle clip =
+                            new javafx.scene.shape.Rectangle(CARD_W, CARD_IMG_H);
+                        clip.setArcWidth(28);
+                        clip.setArcHeight(28);
+                        iv.setClip(clip);
+                        imgArea.getChildren().add(iv);
+                        loaded = true;
+                    }
+                }
+            } catch (Exception ex) {
+                // fall through to placeholder
+                System.err.println("[menu_contents] Could not load image: " + imagePath + " — " + ex.getMessage());
+            }
+        }
+
+        if (!loaded) {
+            // Camera placeholder (same as original)
+            FontIcon camIcon = new FontIcon(FontAwesomeSolid.CAMERA);
+            camIcon.setIconSize(28);
+            camIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+            camIcon.setOpacity(0.4);
+            imgArea.getChildren().add(camIcon);
+        }
+
+        return imgArea;
+    }
+
     // ══════════════════════════════════════════════════════
     //  STYLE HELPERS
     // ══════════════════════════════════════════════════════
@@ -1087,7 +1135,7 @@ private void showInsufficientModal(double paid, double total, double needed) {
                "-fx-padding: 8 20 8 20;" +
                "-fx-cursor: hand;";
     }
-    
+
     private String sizeBadgeStyle(boolean active) {
         return "-fx-font-family: '" + FONT_FAMILY + "';" +
                "-fx-font-size: 13px;" +

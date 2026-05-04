@@ -1,11 +1,9 @@
--- ══════════════════════════════════════════════════════════════
---  timelogs_query.sql
---  Creates the TimeLogs table and seeds it with sample rows
---  referencing the 4 seeded employees.
---  Run employees_query.sql FIRST.
--- ══════════════════════════════════════════════════════════════
+-- timelogs_query.sql  |  Cafe Saburo POS — TimeLogs Table Setup + Seed  |  T-SQL (SQL Server)
+-- Creates the TimeLogs table and seeds it with one log per employee.
+-- Run AFTER employees_query.sql.
 
--- ── Table definition ─────────────────────────────────────────
+-- ── CREATE TABLE: TimeLogs with soft delete and clock-in/out tracking ────────────────────────────
+-- time_out = NULL means the employee is currently clocked in.
 IF NOT EXISTS (
     SELECT 1 FROM sys.tables WHERE name = 'TimeLogs' AND type = 'U'
 )
@@ -13,15 +11,15 @@ BEGIN
     CREATE TABLE dbo.TimeLogs (
         log_id        VARCHAR(15)  NOT NULL PRIMARY KEY,
         employee_id   VARCHAR(10)  NOT NULL,
-        employee_name VARCHAR(100) NOT NULL,           -- denormalised for fast display
+        employee_name VARCHAR(100) NOT NULL,   -- denormalized for fast display without a join
         time_in       DATETIME     NOT NULL,
-        time_out      DATETIME         NULL,           -- NULL = currently clocked in
+        time_out      DATETIME         NULL,   -- NULL = currently clocked in
         status        VARCHAR(10)  NOT NULL DEFAULT 'active',  -- active | archived
         is_deleted    BIT          NOT NULL DEFAULT 0
     );
 END;
 
--- ── Foreign key (added outside IF block so it always resolves) ─
+-- ── FK: Add foreign key to Employees outside the IF block so it always resolves on re-runs ──────
 IF NOT EXISTS (
     SELECT 1 FROM sys.foreign_keys
     WHERE name = 'FK_TimeLogs_Employees'
@@ -33,7 +31,7 @@ BEGIN
             FOREIGN KEY (employee_id) REFERENCES dbo.Employees (employee_id);
 END;
 
--- ── Seed data — one completed log per employee ───────────────
+-- ── SEED: One completed log per employee; Carlo Mendoza left clocked in (time_out = NULL) ────────
 MERGE dbo.TimeLogs AS target
 USING (VALUES
     ('LOG-0001', 'EMP-001', 'Maria Santos',   '2025-04-18 08:00:00', '2025-04-18 17:00:00', 'active', 0),

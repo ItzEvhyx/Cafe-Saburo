@@ -43,8 +43,8 @@ public class pos_records_window_ui {
     // ══════════════════════════════════════════════════════
     //  CARD 2 CONFIGURATION
     // ══════════════════════════════════════════════════════
-    private static final double CARD2_Y = 370;
-    private static final double CARD2_H = 310;
+    private static final double CARD2_Y = 360;
+    private static final double CARD2_H = 310;   // ← increased to fit extra button
 
     // ══════════════════════════════════════════════════════
     //  CARD 3 CONFIGURATION
@@ -76,12 +76,13 @@ public class pos_records_window_ui {
     private orders_contents      ordersContents;
     private customers_contents   customersContents;
     private payments_contents    paymentsContents;
+    private menu_items_contents  menuItemsContents;   // ← NEW
     private timelogs_contents    timelogsContents;
     private employees_contents   employeesContents;
     private inventory_contents   inventoryContents;
     private suppliers_contents   suppliersContents;
     private purchases_contents   purchasesContents;
-    private promotions_contents  promotionsContents;   // ← NEW
+    private promotions_contents  promotionsContents;
 
     // Live-updating labels in Card 3
     private Label    hoursWorkedValue;
@@ -130,6 +131,15 @@ public class pos_records_window_ui {
         background.setFitHeight(screenH);
         background.setPreserveRatio(false);
 
+        // ══════════════════════════════════════════════════
+        //  SET CUSTOM WINDOW ICON
+        // ══════════════════════════════════════════════════
+        try {
+            stage.getIcons().add(new Image("file:assets/cafe_logo.png"));
+        } catch (Exception e) {
+            System.err.println("Warning: Could not load cafe_logo.png for window icon: " + e.getMessage());
+        }
+
         double contentW = screenW - CONTENT_X - 10;
 
         // ── Instantiate all content views ─────────────────
@@ -137,12 +147,13 @@ public class pos_records_window_ui {
         ordersContents     = new orders_contents(contentW, CONTENT_H, conn);
         customersContents  = new customers_contents(contentW, CONTENT_H, conn);
         paymentsContents   = new payments_contents(contentW, CONTENT_H, conn);
+        menuItemsContents  = new menu_items_contents(contentW, CONTENT_H, conn);  // ← NEW
         timelogsContents   = new timelogs_contents(contentW, CONTENT_H, conn);
         employeesContents  = new employees_contents(contentW, CONTENT_H, conn);
         inventoryContents  = new inventory_contents(contentW, CONTENT_H, conn);
         suppliersContents  = new suppliers_contents(contentW, CONTENT_H, conn);
         purchasesContents  = new purchases_contents(contentW, CONTENT_H, conn);
-        promotionsContents = new promotions_contents(contentW, CONTENT_H, conn);  // ← NEW
+        promotionsContents = new promotions_contents(contentW, CONTENT_H, conn);
 
         // ── Cross-view live-update wiring ─────────────────
         menuContents.setOnOrderSubmitted(result -> {
@@ -185,6 +196,9 @@ public class pos_records_window_ui {
 
         // ══════════════════════════════════════════════════
         //  CARD 2 — manager-only buttons, scrollable
+        //  Order: Payments → Menu Items → Time Logs →
+        //         Employees → Inventory → Suppliers →
+        //         Purchases → Promotions
         // ══════════════════════════════════════════════════
         Label managerLabel = new Label("— Manager only —");
         managerLabel.setStyle(
@@ -198,20 +212,21 @@ public class pos_records_window_ui {
         managerLabel.setAlignment(Pos.CENTER);
         VBox.setMargin(managerLabel, new Insets(0, 0, 2, 0));
 
-        HBox paymentsBtn   = createNavButton("Payments",   "assets/icons/payments_icon.png",   38, 20, isManager);
-        HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",   38, 20, isManager);
-        HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",  38, 20, isManager);
-        HBox inventoryBtn  = createNavButton("Inventory",  "assets/icons/inventory_icon.png",  38, 20, isManager);
-        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",  38, 20, isManager);
-        HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",  38, 20, isManager);
-        HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png", 38, 20, isManager);
+        HBox paymentsBtn   = createNavButton("Payments",   "assets/icons/payments_icon.png",    38, 20, isManager);
+        HBox menuItemsBtn  = createNavButton("Menu Items", "assets/icons/menu_items_icon.png",  38, 20, isManager); // ← NEW
+        HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",    38, 20, isManager);
+        HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",   38, 20, isManager);
+        HBox inventoryBtn  = createNavButton("Inventory",  "assets/icons/inventory_icon.png",   38, 20, isManager);
+        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",   38, 20, isManager);
+        HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",   38, 20, isManager);
+        HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png",  38, 20, isManager);
 
         VBox card2Inner = new VBox(7);
         card2Inner.setAlignment(Pos.CENTER_LEFT);
         card2Inner.setPadding(new Insets(6, 6, 6, 6));
         card2Inner.getChildren().addAll(
             managerLabel,
-            paymentsBtn, timeLogsBtn, employeesBtn,
+            paymentsBtn, menuItemsBtn, timeLogsBtn, employeesBtn,   // ← menuItemsBtn after paymentsBtn
             inventoryBtn, suppliersBtn, purchasesBtn, promotionsBtn
         );
 
@@ -265,15 +280,16 @@ public class pos_records_window_ui {
         ordersBtn.setOnMouseClicked(e    -> showOrders());
         customersBtn.setOnMouseClicked(e -> showCustomers());
 
-        // ── Card 2 wiring (managers only) ─────────────────
+        // ── Card 2 wiring (managers only) ───────────��─────
         if (isManager) {
             paymentsBtn.setOnMouseClicked(e   -> showPayments());
+            menuItemsBtn.setOnMouseClicked(e  -> showMenuItems());   // ← NEW
             timeLogsBtn.setOnMouseClicked(e   -> showTimeLogs());
             employeesBtn.setOnMouseClicked(e  -> showEmployees());
             inventoryBtn.setOnMouseClicked(e  -> showInventory());
             suppliersBtn.setOnMouseClicked(e  -> showSuppliers());
             purchasesBtn.setOnMouseClicked(e  -> showPurchases());
-            promotionsBtn.setOnMouseClicked(e -> showPromotions());   // ← NEW
+            promotionsBtn.setOnMouseClicked(e -> showPromotions());
         }
 
         // ── Start live clock ──────────────────────────────
@@ -375,7 +391,7 @@ public class pos_records_window_ui {
 
     // ══════════════════════════════════════════════════════
     //  SHIFT CLOCK
-    // ══════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════���═
     private void startShiftClock() {
         shiftClock = new Timeline(
             new KeyFrame(Duration.seconds(1), e -> {
@@ -511,6 +527,9 @@ public class pos_records_window_ui {
     private void showPayments() {
         contentPane.getChildren().setAll(paymentsContents.getView());
     }
+    private void showMenuItems() {
+        contentPane.getChildren().setAll(menuItemsContents.getView());   // ← NEW
+    }
     private void showTimeLogs() {
         contentPane.getChildren().setAll(timelogsContents.getView());
     }
@@ -527,7 +546,7 @@ public class pos_records_window_ui {
         contentPane.getChildren().setAll(purchasesContents.getView());
     }
     private void showPromotions() {
-        contentPane.getChildren().setAll(promotionsContents.getView());   // ← NEW
+        contentPane.getChildren().setAll(promotionsContents.getView());
     }
 
     // ══════════════════════════════════════════════════════
@@ -597,7 +616,7 @@ public class pos_records_window_ui {
 
     // ══════════════════════════════════════════════════════
     //  CARD 3 HELPER BUILDERS
-    // ══════════════════════════════════════════════════════
+    // ══════════════════════════���═══════════════════════════
     private Label buildInfoRow(FontAwesomeSolid iconCode, String key, String value) {
         Label iconLbl  = buildIconLabel(iconCode);
         Label keyLbl   = buildKeyLabel(key);

@@ -15,10 +15,16 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
+import javafx.stage.FileChooser;
 import javafx.stage.Popup;
+import javafx.stage.Stage;
+import javafx.stage.Window;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.sql.Connection;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -43,7 +49,7 @@ public class promotions_contents {
     private static final double COL_START_DATE    = 0.19;
     private static final double COL_END_DATE      = 0.19;
 
-    private static final double ROW_H        = 44;
+    private static final double ROW_H        = 52;
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
 
@@ -62,6 +68,12 @@ public class promotions_contents {
     private static final String ROW_ALT_BG   = "#FDF5F6";
     private static final String ROW_WHITE_BG = "white";
     private static final String HEADER_BG    = "#F5E8EA";
+
+    // ══════════════════════════════════════════════════════
+    //  PROPERTY KEY — used to store the trigger inside VBox
+    // ══════════════════════════════════════════════════════
+    /** Key stored in a dropdown VBox's properties map pointing to its HBox trigger. */
+    private static final String PROP_TRIGGER = "dropdownTrigger";
 
     // ══════════════════════════════════════════════════════
     //  STATE
@@ -161,6 +173,10 @@ public class promotions_contents {
     //  CUSTOM DROPDOWN ENGINE
     // ══════════════════════════════════════════════════════
 
+    /**
+     * Builds a full-size dropdown field (label on top, trigger below).
+     * The trigger HBox is stored under PROP_TRIGGER in the returned VBox's properties.
+     */
     private VBox buildDropdownField(FontAwesomeSolid iconCode, String label) {
         Label fieldLabel = buildFieldLabel(label);
 
@@ -204,6 +220,8 @@ public class promotions_contents {
         VBox wrapper = new VBox(6, fieldLabel, trigger);
         wrapper.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(wrapper, Priority.ALWAYS);
+        // ── FIX: store trigger reference directly so getTrigger() is unambiguous ──
+        wrapper.getProperties().put(PROP_TRIGGER, trigger);
         return wrapper;
     }
 
@@ -218,9 +236,25 @@ public class promotions_contents {
                "-fx-border-color: #CCCCCC;-fx-border-width: 1.5;-fx-border-radius: 10;";
     }
 
+    /**
+     * Returns the HBox trigger for any dropdown VBox, regardless of whether it was
+     * built with buildDropdownField (full layout) or buildMiniDropdownVBox (mini layout).
+     *
+     * Both builders now store the trigger under PROP_TRIGGER, so this is unambiguous
+     * and never throws an IndexOutOfBoundsException.
+     */
+    private HBox getTrigger(VBox fieldBox) {
+        Object stored = fieldBox.getProperties().get(PROP_TRIGGER);
+        if (stored instanceof HBox) return (HBox) stored;
+        // Fallback (should never be needed with the fixed builders):
+        javafx.scene.Node first = fieldBox.getChildren().get(0);
+        if (first instanceof HBox) return (HBox) first;
+        return (HBox) fieldBox.getChildren().get(1);
+    }
+
     @SuppressWarnings("unchecked")
     private void setDropdownItems(VBox fieldBox, List<String> items, String promptText) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        HBox trigger = getTrigger(fieldBox);
         ((List<String>) trigger.getProperties().get("items")).clear();
         ((List<String>) trigger.getProperties().get("items")).addAll(items);
         Label vl = (Label) trigger.getProperties().get("valueLabel");
@@ -230,7 +264,7 @@ public class promotions_contents {
     }
 
     private void setDropdownDisabled(VBox fieldBox, boolean disabled) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        HBox trigger = getTrigger(fieldBox);
         trigger.getProperties().put("disabled", disabled);
         trigger.setCursor(disabled ? javafx.scene.Cursor.DEFAULT : javafx.scene.Cursor.HAND);
         Label    vl  = (Label)    trigger.getProperties().get("valueLabel");
@@ -247,12 +281,12 @@ public class promotions_contents {
     }
 
     private String getDropdownValue(VBox fieldBox) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        HBox trigger = getTrigger(fieldBox);
         return ((String[]) trigger.getUserData())[0];
     }
 
     private void resetDropdown(VBox fieldBox, String promptText) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        HBox trigger = getTrigger(fieldBox);
         ((String[]) trigger.getUserData())[0] = null;
         Label vl = (Label) trigger.getProperties().get("valueLabel");
         vl.setText(promptText);
@@ -260,7 +294,7 @@ public class promotions_contents {
     }
 
     private void setDropdownOnAction(VBox fieldBox, Runnable action) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        HBox trigger = getTrigger(fieldBox);
         trigger.getProperties().put("onAction", action);
     }
 
@@ -432,20 +466,22 @@ public class promotions_contents {
                 if (r[0].equals(promoId)) { r[colIdx] = chosen.toString(); break; }
             }
             util.updateDate(promoId, forEndDate, chosen.toString());
-            System.out.println("[promotions_contents] date edit: " + promoId
-                + (forEndDate ? " end" : " start") + " → " + chosen);
         });
 
         HBox cell = new HBox(6, monthBox, dayBox);
         cell.setPrefWidth(width);
         cell.setMinHeight(ROW_H);
-        cell.setPadding(new Insets(4, 6, 4, 6));
+        cell.setPadding(new Insets(6, 6, 6, 6));
         cell.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(monthBox, Priority.ALWAYS);
         HBox.setHgrow(dayBox,   Priority.ALWAYS);
         return cell;
     }
 
+    /**
+     * Builds a compact dropdown VBox for use inside table edit-mode cells.
+     * The trigger HBox is stored under PROP_TRIGGER so getTrigger() works correctly.
+     */
     private VBox buildMiniDropdownVBox(FontAwesomeSolid iconCode, List<String> items,
                                         String promptText, String preselected) {
         FontIcon fi = new FontIcon(iconCode);
@@ -490,7 +526,58 @@ public class promotions_contents {
         VBox wrapper = new VBox(0, trigger);
         wrapper.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(wrapper, Priority.ALWAYS);
+        // ── FIX: store trigger reference directly so getTrigger() is unambiguous ──
+        wrapper.getProperties().put(PROP_TRIGGER, trigger);
         return wrapper;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  INLINE TEXT EDITOR  (edit-mode table cells)
+    // ══════════════════════════════════════════════════════
+
+    private HBox buildInlineTextEditorCell(String promoId, String current,
+                                            int colIdx, double width, String prompt) {
+        TextField tf = new TextField(current != null ? current : "");
+        tf.setPromptText(prompt);
+        tf.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 6;" +
+            "-fx-background-radius: 6;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 12px;" +
+            "-fx-text-fill: #333333;" +
+            "-fx-prompt-text-fill: #AAAAAA;" +
+            "-fx-padding: 4 8 4 8;");
+        tf.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(tf, Priority.ALWAYS);
+
+        Runnable persist = () -> {
+            String val = tf.getText().trim();
+            for (String[] r : cachedRows) {
+                if (r[0].equals(promoId)) { r[colIdx] = val; break; }
+            }
+            persistTextColumn(promoId, colIdx, val);
+        };
+
+        tf.setOnAction(e -> persist.run());
+        tf.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            if (!isFocused) persist.run();
+        });
+
+        HBox cell = new HBox(tf);
+        cell.setPrefWidth(width);
+        cell.setMinHeight(ROW_H);
+        cell.setPadding(new Insets(8, 8, 8, 10));
+        cell.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(tf, Priority.ALWAYS);
+        return cell;
+    }
+
+    private void persistTextColumn(String promoId, int colIdx, String value) {
+        String colName = colIdx == 1 ? "promo_name" : "discount_type";
+        util.updateTextField(promoId, colName, value);
     }
 
     // ══════════════════════════════════════════════════════
@@ -564,7 +651,6 @@ public class promotions_contents {
         VBox endMonthBox = (VBox) endDatePicker.getProperties().get("monthBox");
         VBox endDayBox   = (VBox) endDatePicker.getProperties().get("dayBox");
 
-        // When start day changes → cache start date and reset end pickers
         setDropdownOnAction(startDayBox, () -> {
             startDateRef[0] = getDatePickerValue(startDatePicker);
             resetDropdown(endMonthBox, "Select month...");
@@ -617,7 +703,6 @@ public class promotions_contents {
             LocalDate startDate    = getDatePickerValue(startDatePicker);
             LocalDate endDate      = getDatePickerValue(endDatePicker);
 
-            // Delegate validation to util
             String error = util.validate(promoName, discountType, startDate, endDate);
             if (error != null) { showError(errorLbl, error); return; }
 
@@ -870,13 +955,14 @@ public class promotions_contents {
             archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
-        // ── Archive All / Restore All ─────────────────────
+        // ── Archive All / Restore All — HIDDEN by default ─
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW); archiveAllBtn.setPrefHeight(btnH);
         archiveAllBtn.setAlignment(Pos.CENTER);
         archiveAllBtn.setStyle(archiveAllBtnStyle(false));
         archiveAllBtn.setVisible(false);
+        archiveAllBtn.setManaged(false);
         archiveAllBtn.setLayoutX(archAllX); archiveAllBtn.setLayoutY(btnY);
         archiveAllBtn.setOnMouseEntered(e -> archiveAllBtn.setStyle(archiveAllBtnStyle(true)));
         archiveAllBtn.setOnMouseExited(e  -> archiveAllBtn.setStyle(archiveAllBtnStyle(false)));
@@ -886,13 +972,14 @@ public class promotions_contents {
             rebuildTable();
         });
 
-        // ── Confirm ───────────────────────────────────────
+        // ── Confirm — HIDDEN by default ───────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW); confirmBtn.setPrefHeight(btnH);
         confirmBtn.setAlignment(Pos.CENTER);
         confirmBtn.setStyle(confirmBtnStyle(false));
         confirmBtn.setVisible(false);
+        confirmBtn.setManaged(false);
         confirmBtn.setLayoutX(confirmX); confirmBtn.setLayoutY(btnY);
         confirmBtn.setOnMouseEntered(e -> confirmBtn.setStyle(confirmBtnStyle(true)));
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
@@ -903,8 +990,7 @@ public class promotions_contents {
             selectedIds.clear();
             archiveMode = false;
             updateArchiveBtnIcon();
-            archiveAllBtn.setVisible(false);
-            confirmBtn.setVisible(false);
+            setArchiveControlsVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
             repositionSearchBar();
             cachedRows = util.fetchPromotions(currentTab);
@@ -953,11 +1039,83 @@ public class promotions_contents {
         return stackRoot;
     }
 
+    private void setArchiveControlsVisible(boolean visible) {
+        archiveAllBtn.setVisible(visible);
+        archiveAllBtn.setManaged(visible);
+        confirmBtn.setVisible(visible);
+        confirmBtn.setManaged(visible);
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  EXPORT CSV  — FIX: robust stage lookup via Window list
+    // ══════════════════════════════════════════════════════
     private void exportCsv() {
-        String csv = util.buildCsv(cachedRows);
-        if (csv.isEmpty()) return;
-        System.out.println("[promotions_contents] CSV export ready (" + cachedRows.size() + " rows).");
-        // TODO: open FileChooser and write csv to chosen path
+        List<String[]> rows = util.filterRows(cachedRows, searchQuery);
+        if (rows.isEmpty()) return;
+
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Save Promotions as CSV");
+        chooser.setInitialFileName("promotions_" + currentTab + ".csv");
+        chooser.getExtensionFilters().add(
+            new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+
+        // ── FIX: resolve Stage without relying on root.getScene() being non-null ──
+        Stage stage = resolveStage();
+        File file = chooser.showSaveDialog(stage);   // null stage → unowned dialog (still works)
+        if (file == null) return;
+
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+            writer.write("Promo ID,Promo Name,Discount Type,Start Date,End Date");
+            writer.newLine();
+            for (String[] row : rows) {
+                writer.write(
+                    escapeCsv(row[0]) + "," +
+                    escapeCsv(row[1]) + "," +
+                    escapeCsv(row[2]) + "," +
+                    escapeCsv(row[3]) + "," +
+                    escapeCsv(row[4])
+                );
+                writer.newLine();
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    /**
+     * Resolves the primary Stage for dialog ownership.
+     * Tries root → stackRoot → first visible Stage in Window list.
+     * Returns null if none is found (FileChooser still works without an owner).
+     */
+    private Stage resolveStage() {
+        // 1. Try through root's scene (fastest path when already shown)
+        try {
+            if (root != null && root.getScene() != null
+                    && root.getScene().getWindow() instanceof Stage s) {
+                return s;
+            }
+        } catch (Exception ignored) {}
+
+        // 2. Try through stackRoot
+        try {
+            if (stackRoot != null && stackRoot.getScene() != null
+                    && stackRoot.getScene().getWindow() instanceof Stage s) {
+                return s;
+            }
+        } catch (Exception ignored) {}
+
+        // 3. Fall back to the first visible Stage reported by JavaFX
+        for (Window w : Stage.getWindows()) {
+            if (w instanceof Stage s && w.isShowing()) return s;
+        }
+        return null;
+    }
+
+    private String escapeCsv(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        return value;
     }
 
     // ══════════════════════════════════════════════════════
@@ -968,8 +1126,7 @@ public class promotions_contents {
         selectedIds.clear();
         updateArchiveBtnIcon();
         archiveAllBtn.setText(currentTab.equals("archived") ? "Restore All" : "Archive All");
-        archiveAllBtn.setVisible(archiveMode);
-        confirmBtn.setVisible(archiveMode);
+        setArchiveControlsVisible(archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
         repositionSearchBar();
         rebuildTable();
@@ -1004,8 +1161,7 @@ public class promotions_contents {
 
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
-        archiveAllBtn.setVisible(false);
-        confirmBtn.setVisible(false);
+        setArchiveControlsVisible(false);
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
@@ -1203,24 +1359,32 @@ public class promotions_contents {
         LocalDate parsedStart    = util.tryParseDate(startDate);
         LocalDate[] startDateRef = new LocalDate[]{ parsedStart };
 
+        javafx.scene.Node nameCell;
+        javafx.scene.Node discountCell;
         javafx.scene.Node startCell;
         javafx.scene.Node endCell;
 
         if (editMode && currentTab.equals("active")) {
-            startCell = buildInlineDateEditorCell(promoId, startDate, false,
-                                                  dataW * COL_START_DATE, null);
-            endCell   = buildInlineDateEditorCell(promoId, endDate,   true,
-                                                  dataW * COL_END_DATE,   startDateRef);
+            nameCell     = buildInlineTextEditorCell(promoId, promoName,     1,
+                               dataW * COL_PROMO_NAME,    "Promotion name");
+            discountCell = buildInlineTextEditorCell(promoId, discountType,  2,
+                               dataW * COL_DISCOUNT_TYPE, "e.g. Percentage, Fixed, BOGO");
+            startCell    = buildInlineDateEditorCell(promoId, startDate, false,
+                               dataW * COL_START_DATE, null);
+            endCell      = buildInlineDateEditorCell(promoId, endDate,   true,
+                               dataW * COL_END_DATE,   startDateRef);
         } else {
-            startCell = buildTextCell(startDate, dataW * COL_START_DATE, false);
-            endCell   = buildTextCell(endDate,   dataW * COL_END_DATE,   false);
+            nameCell     = buildTextCell(promoName,    dataW * COL_PROMO_NAME,    false);
+            discountCell = buildTextCell(discountType, dataW * COL_DISCOUNT_TYPE, false);
+            startCell    = buildTextCell(startDate,    dataW * COL_START_DATE,    false);
+            endCell      = buildTextCell(endDate,      dataW * COL_END_DATE,      false);
         }
 
         row.getChildren().addAll(
-            buildTextCell(promoId,      dataW * COL_PROMO_ID,      true),  buildColDivider(),
-            buildTextCell(promoName,    dataW * COL_PROMO_NAME,    false), buildColDivider(),
-            buildTextCell(discountType, dataW * COL_DISCOUNT_TYPE, false), buildColDivider(),
-            startCell,                                                       buildColDivider(),
+            buildTextCell(promoId, dataW * COL_PROMO_ID, true), buildColDivider(),
+            nameCell,                                            buildColDivider(),
+            discountCell,                                        buildColDivider(),
+            startCell,                                           buildColDivider(),
             endCell
         );
 

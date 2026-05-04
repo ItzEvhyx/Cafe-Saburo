@@ -68,10 +68,26 @@ public class payments_contents {
 
     private String         currentTab  = "active";
     private boolean        archiveMode = false;
+
+    /**
+     * searchQuery holds the current search string.
+     * When non-blank, payments_util.fetchPaymentsFiltered() is called so that
+     * filtering is performed by the database (usp_GetPayments @search param)
+     * rather than by iterating cachedRows in Java.
+     */
     private String         searchQuery = "";
+
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
+
+    /**
+     * cachedRows holds the last result set returned by the DB.
+     * When searchQuery is blank this is the full tab dataset.
+     * When searchQuery is set this is already the filtered subset.
+     * Either way, getDisplayRows() returns cachedRows directly — no
+     * second pass in Java is needed.
+     */
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
@@ -140,16 +156,39 @@ public class payments_contents {
         }
     }
 
-    // ── Filtered rows based on searchQuery ───────────────
-    private List<String[]> getFilteredRows() {
-        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
-        String q = searchQuery.trim().toLowerCase();
-        List<String[]> filtered = new ArrayList<>();
-        for (String[] row : cachedRows) {
-            if (row[0].toLowerCase().contains(q) || row[1].toLowerCase().contains(q))
-                filtered.add(row);
+    // ══════════════════════════════════════════════════════
+    //  DISPLAY ROWS
+    //
+    //  Previously getFilteredRows() iterated cachedRows in Java.
+    //  Now cachedRows is already the correct result — either the full
+    //  tab dataset (searchQuery blank) or the DB-filtered subset
+    //  (searchQuery non-blank, fetched via usp_GetPayments @search).
+    //  This method simply returns the cached list.
+    // ══════════════════════════════════════════════════════
+    private List<String[]> getDisplayRows() {
+        return cachedRows;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  SEARCH — delegates to DB proc
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * Called whenever the search field changes.
+     * Fetches a fresh filtered result set from the database and rebuilds the table.
+     * This keeps filtering logic in SQL (usp_GetPayments) rather than Java.
+     */
+    private void applySearch(String query) {
+        searchQuery = (query == null) ? "" : query.trim();
+        selectedIds.clear();
+
+        if (searchQuery.isBlank()) {
+            cachedRows = payments_util.fetchPayments(conn, currentTab);
+        } else {
+            cachedRows = payments_util.fetchPaymentsFiltered(conn, currentTab, searchQuery);
         }
-        return filtered;
+
+        rebuildTable();
     }
 
     // ══════════════════════════════════════════════════════
@@ -296,7 +335,11 @@ public class payments_contents {
                 pill.setStyle(pillStyle(true));
 
                 resultArea.getChildren().clear();
+
+                // runOperation now dispatches to a CallableStatement calling the
+                // appropriate analytics stored procedure (usp_PaymentSum, etc.)
                 List<String[]> data = payments_util.runOperation(conn, opKey);
+
                 if (data == null || data.size() <= 1) {
                     VBox noData = new VBox();
                     noData.setAlignment(Pos.CENTER);
@@ -429,7 +472,6 @@ public class payments_contents {
         double archAllW  = 100;
         double confirmW  = 90;
         double csvW      = 120;
-        // ── Width for the new labeled Analytics button ────
         double analyticsW = 180;
         searchW           = 200;
 
@@ -441,7 +483,7 @@ public class payments_contents {
             "-fx-text-fill: " + ACCENT + ";"
         );
 
-        // ── Analytics & Operations button (labeled, green — mirrors addSupplierBtn) ──
+        // ── Analytics & Operations button ─────────────────
         FontIcon analyticsIcon = new FontIcon(FontAwesomeSolid.CHART_BAR);
         analyticsIcon.setIconSize(14);
         analyticsIcon.setIconColor(javafx.scene.paint.Color.web("#155724"));
@@ -509,6 +551,7 @@ public class payments_contents {
                 "Payments (" + currentTab + ")",
                 "This will permanently remove all payments in this view.\nThis action cannot be undone.",
                 () -> {
+                    // Calls usp_HardDeleteAll — trg_PreventDeleteActive guards active rows
                     payments_util.hardDeleteAll(conn, currentTab);
                     cachedRows.clear();
                     selectedIds.clear();
@@ -562,7 +605,7 @@ public class payments_contents {
             archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
-        // ── Archive All button ────────────────────────────
+        // ── Archive All / Restore All button ─────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW);
@@ -594,6 +637,7 @@ public class payments_contents {
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
+            // Both paths now call stored procedures (usp_ArchivePayments / usp_RestorePayments)
             if (currentTab.equals("active")) payments_util.archiveSelected(conn, selectedIds);
             else                             payments_util.restoreSelected(conn, selectedIds);
             selectedIds.clear();
@@ -639,16 +683,17 @@ public class payments_contents {
             "-fx-border-radius: 20;"
         );
 
-        searchField.textProperty().addListener((obs, oldVal, newVal) -> {
-            searchQuery = newVal == null ? "" : newVal.trim();
-            rebuildTable();
-        });
+        // Listener: delegate search to the DB proc instead of filtering cachedRows in Java
+        searchField.textProperty().addListener((obs, oldVal, newVal) ->
+            applySearch(newVal)
+        );
 
         // ── Table ─────────────────────────────────────────
         double tableY = TOP_PADDING + HEADER_H + 10;
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
+        // Initial load via usp_GetPayments (no search filter)
         cachedRows  = payments_util.fetchPayments(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
@@ -704,6 +749,8 @@ public class payments_contents {
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
         repositionSearchBar();
+
+        // Reload via usp_GetPayments for the new tab
         cachedRows = payments_util.fetchPayments(conn, tab);
         rebuildTable();
     }
@@ -827,7 +874,8 @@ public class payments_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, getFilteredRows());
+        // getDisplayRows() returns cachedRows directly — already filtered by DB
+        VBox tableBox = buildTable(tableW, getDisplayRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -864,8 +912,9 @@ public class payments_contents {
         table.getChildren().add(buildHeaderRow(tableW, dataW));
 
         if (rows.isEmpty()) {
-            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
-                       : currentTab.equals("archived") ? "No archived payments." : "No payments found.";
+            String msg = !searchQuery.isBlank()
+                ? "No results found for \"" + searchQuery + "\"."
+                : currentTab.equals("archived") ? "No archived payments." : "No payments found.";
             Label empty = new Label(msg);
             empty.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -1060,7 +1109,6 @@ public class payments_contents {
                "-fx-cursor: hand;";
     }
 
-    // ── Labeled green button — matches addSupplierBtn style ──
     private String analyticsBtnStyle(boolean hovered) {
         return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";" +
                "-fx-background-radius: 8;" +

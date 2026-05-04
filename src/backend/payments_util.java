@@ -6,9 +6,11 @@ import javafx.stage.Stage;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
+import java.sql.CallableStatement;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -17,13 +19,19 @@ import java.util.Set;
  * payments_util — Business logic layer for the Payments module.
  *
  * Responsibilities:
- *   - Fetching payment rows from the database
- *   - Archiving / restoring / hard-deleting payments
+ *   - Fetching payment rows via usp_GetPayments
+ *   - Archiving / restoring via usp_ArchivePayments / usp_RestorePayments
+ *   - Hard-deleting via usp_HardDeleteAll
  *   - Exporting the current view to CSV
- *   - Running all analytics aggregate operations
+ *   - Running all analytics operations via usp_Payment* procedures
  *
- * This class is intentionally free of any JavaFX UI nodes.
- * payments_contents calls these methods and handles rendering.
+ * All database communication uses CallableStatement ({CALL dbo.proc(...)}).
+ * No inline SQL strings remain in this class — every query lives in a
+ * named stored procedure in the database.
+ *
+ * Analytics procedures each return two result sets:
+ *   RS1 — detail rows  (header derived from ResultSetMetaData)
+ *   RS2 — summary row  (footer appended by Java after getMoreResults())
  */
 public class payments_util {
 
@@ -46,39 +54,104 @@ public class payments_util {
     };
 
     // ══════════════════════════════════════════════════════
+    //  PROC NAME MAPPING
+    //  Maps each operation key to its stored procedure name.
+    // ══════════════════════════════════════════════════════
+    private static String procNameFor(String opKey) {
+        switch (opKey) {
+            case "SUM":         return "usp_PaymentSum";
+            case "AVERAGE":     return "usp_PaymentAvg";
+            case "COUNT":       return "usp_PaymentCount";
+            case "HIGHEST":     return "usp_PaymentHighest";
+            case "LOWEST":      return "usp_PaymentLowest";
+            case "BY_METHOD":   return "usp_ByMethod";
+            case "BY_CUSTOMER": return "usp_ByCustomer";
+            case "DAILY":       return "usp_Daily";
+            case "ABOVE_AVG":   return "usp_AboveAvg";
+            case "NO_PAYMENTS": return "usp_NoPayments";
+            default:            return null;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════
     //  FETCH
     // ══════════════════════════════════════════════════════
 
     /**
-     * Fetches payment rows for the given tab ("active" or "archived").
-     * Returns a list of String[4]: { payment_id, order_id, payment_method, amount }
-     * Amount is pre-formatted as "X,XXX.XX" (no currency symbol).
+     * Calls usp_GetPayments to fetch payment rows for the given tab.
+     *
+     * @param conn  Active SQL Server connection.
+     * @param tab   "active" | "archived"
+     * @return List of String[4]: { payment_id, order_id, payment_method, amount }
+     *         Amount is pre-formatted as "X,XXX.XX" (no currency symbol).
      */
     public static List<String[]> fetchPayments(Connection conn, String tab) {
         List<String[]> rows = new ArrayList<>();
         if (!isConnOpen(conn)) return rows;
 
-        String sql =
-            "SELECT payment_id, order_id, payment_method, amount " +
-            "FROM dbo.Payments " +
-            "WHERE is_deleted = 0 AND status = ? " +
-            "ORDER BY payment_date DESC";
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo.usp_GetPayments(?, ?)}")) {
 
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tab);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                double raw    = rs.getDouble("amount");
-                String amount = String.format("%,.2f", raw);
-                rows.add(new String[]{
-                    rs.getString("payment_id")     != null ? rs.getString("payment_id")     : "-",
-                    rs.getString("order_id")       != null ? rs.getString("order_id")       : "-",
-                    rs.getString("payment_method") != null ? rs.getString("payment_method") : "-",
-                    amount
-                });
+            cs.setString(1, tab);
+            cs.setNull(2, Types.NVARCHAR);   // no search filter on initial load
+
+            try (ResultSet rs = cs.executeQuery()) {
+                while (rs.next()) {
+                    double raw    = rs.getDouble("amount");
+                    String amount = String.format("%,.2f", raw);
+                    rows.add(new String[]{
+                        nvl(rs.getString("payment_id")),
+                        nvl(rs.getString("order_id")),
+                        nvl(rs.getString("payment_method")),
+                        amount
+                    });
+                }
             }
-            rs.close();
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return rows;
+    }
+
+    /**
+     * Calls usp_GetPayments with a search term to return filtered rows.
+     * Used when the search is better delegated to the database (large datasets).
+     *
+     * @param conn    Active SQL Server connection.
+     * @param tab     "active" | "archived"
+     * @param search  Partial match string for payment_id / order_id.
+     */
+    public static List<String[]> fetchPaymentsFiltered(
+            Connection conn, String tab, String search) {
+
+        List<String[]> rows = new ArrayList<>();
+        if (!isConnOpen(conn)) return rows;
+
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo.usp_GetPayments(?, ?)}")) {
+
+            cs.setString(1, tab);
+            if (search == null || search.isBlank()) {
+                cs.setNull(2, Types.NVARCHAR);
+            } else {
+                cs.setString(2, search.trim());
+            }
+
+            try (ResultSet rs = cs.executeQuery()) {
+                while (rs.next()) {
+                    double raw    = rs.getDouble("amount");
+                    String amount = String.format("%,.2f", raw);
+                    rows.add(new String[]{
+                        nvl(rs.getString("payment_id")),
+                        nvl(rs.getString("order_id")),
+                        nvl(rs.getString("payment_method")),
+                        amount
+                    });
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         return rows;
     }
 
@@ -87,45 +160,65 @@ public class payments_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Sets status = 'archived' for every payment_id in the given set.
+     * Calls usp_ArchivePayments with all selected IDs in a single round trip.
+     * The previous implementation looped N PreparedStatement calls.
+     *
+     * @param conn  Active SQL Server connection.
+     * @param ids   Set of payment_id strings to archive.
      */
     public static void archiveSelected(Connection conn, Set<String> ids) {
         if (!isConnOpen(conn) || ids.isEmpty()) return;
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Payments SET status = 'archived' " +
-                    "WHERE payment_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id);
-                ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
+
+        String joined = String.join(",", ids);
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo.usp_ArchivePayments(?)}")) {
+
+            cs.setString(1, joined);
+            cs.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
     /**
-     * Sets status = 'active' for every payment_id in the given set.
+     * Calls usp_RestorePayments with all selected IDs in a single round trip.
+     *
+     * @param conn  Active SQL Server connection.
+     * @param ids   Set of payment_id strings to restore to 'active'.
      */
     public static void restoreSelected(Connection conn, Set<String> ids) {
         if (!isConnOpen(conn) || ids.isEmpty()) return;
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Payments SET status = 'active' " +
-                    "WHERE payment_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id);
-                ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
+
+        String joined = String.join(",", ids);
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo.usp_RestorePayments(?)}")) {
+
+            cs.setString(1, joined);
+            cs.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
     /**
-     * Hard-deletes (permanent) all non-deleted payments for the given tab.
+     * Calls usp_HardDeleteAll to permanently remove all non-soft-deleted
+     * payments for the given tab. The trg_PreventDeleteActive trigger will
+     * raise an error if any active rows are accidentally targeted.
+     *
+     * @param conn        Active SQL Server connection.
+     * @param currentTab  "active" | "archived"
      */
     public static void hardDeleteAll(Connection conn, String currentTab) {
         if (!isConnOpen(conn)) return;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM dbo.Payments WHERE is_deleted = 0 AND status = ?")) {
-            ps.setString(1, currentTab);
-            ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
+
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo.usp_HardDeleteAll(?)}")) {
+
+            cs.setString(1, currentTab);
+            cs.executeUpdate();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     // ══════════════════════════════════════════════════════
@@ -136,10 +229,12 @@ public class payments_util {
      * Opens a save-file dialog and writes the current cached rows to a CSV.
      *
      * @param ownerStage  The JavaFX Stage for the FileChooser dialog (may be null).
-     * @param currentTab  "active" or "archived" — used to suggest a filename.
+     * @param currentTab  "active" | "archived" — used to suggest a filename.
      * @param cachedRows  The rows currently displayed in the table.
      */
-    public static void exportCsv(Stage ownerStage, String currentTab, List<String[]> cachedRows) {
+    public static void exportCsv(
+            Stage ownerStage, String currentTab, List<String[]> cachedRows) {
+
         if (cachedRows.isEmpty()) return;
 
         FileChooser chooser = new FileChooser();
@@ -166,7 +261,9 @@ public class payments_util {
                 );
                 writer.newLine();
             }
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private static String escapeCsv(String value) {
@@ -181,404 +278,115 @@ public class payments_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Runs the analytics query identified by opKey.
-     * Always returns a List where index 0 is the header row and the last row
-     * is a summary/footer row. Returns an empty list on unknown key.
+     * Dispatches to the correct analytics stored procedure by opKey.
+     *
+     * Each analytics proc returns two result sets:
+     *   RS1 — detail rows. The header row is built dynamically from
+     *          ResultSetMetaData so the Java code never hardcodes column names.
+     *   RS2 — summary/footer row (one row with aggregated values).
+     *
+     * Returns a List where index 0 is the header row and the last entry
+     * is the footer row. Returns an empty list on unknown key or DB error.
+     *
+     * @param conn   Active SQL Server connection.
+     * @param opKey  One of the keys defined in OPERATIONS[][0].
      */
     public static List<String[]> runOperation(Connection conn, String opKey) {
-        switch (opKey) {
-            case "SUM":         return opSum(conn);
-            case "AVERAGE":     return opAverage(conn);
-            case "COUNT":       return opCount(conn);
-            case "HIGHEST":     return opHighest(conn);
-            case "LOWEST":      return opLowest(conn);
-            case "BY_METHOD":   return opByMethod(conn);
-            case "BY_CUSTOMER": return opByCustomer(conn);
-            case "DAILY":       return opDaily(conn);
-            case "ABOVE_AVG":   return opAboveAverage(conn);
-            case "NO_PAYMENTS": return opNoPayments(conn);
-            default:            return new ArrayList<>();
-        }
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  ANALYTICS OPERATIONS
-    // ══════════════════════════════════════════════════════
-
-    // Q1 — Total Revenue
-    private static List<String[]> opSum(Connection conn) {
         List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment ID", "Order ID", "Method", "Amount"});
         if (!isConnOpen(conn)) return rows;
 
-        String sql =
-            "SELECT payment_id, order_id, payment_method, amount " +
-            "FROM   dbo.Payments " +
-            "WHERE  is_deleted = 0 AND status = 'active' " +
-            "ORDER  BY payment_date DESC";
-        double total = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double amt = rs.getDouble("amount");
-                total += amt;
-                rows.add(new String[]{
-                    rs.getString("payment_id"),
-                    rs.getString("order_id"),
-                    rs.getString("payment_method"),
-                    String.format("%,.2f", amt)
-                });
+        String procName = procNameFor(opKey);
+        if (procName == null) return rows;
+
+        try (CallableStatement cs = conn.prepareCall(
+                "{CALL dbo." + procName + "()}")) {
+
+            boolean hasFirstRS = cs.execute();
+
+            // ── Result set 1: detail rows ─────────────────
+            if (hasFirstRS) {
+                try (ResultSet rs = cs.getResultSet()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int cols = meta.getColumnCount();
+
+                    // Build header row from column labels (defined in proc AS [...])
+                    String[] header = new String[cols];
+                    for (int c = 1; c <= cols; c++) {
+                        header[c - 1] = meta.getColumnLabel(c);
+                    }
+                    rows.add(header);
+
+                    // Detail data rows
+                    while (rs.next()) {
+                        String[] row = new String[cols];
+                        for (int c = 1; c <= cols; c++) {
+                            String val = rs.getString(c);
+                            row[c - 1] = (val != null) ? val : "-";
+                        }
+                        rows.add(row);
+                    }
+                }
+
+                // ── Result set 2: summary/footer row ─────────
+                if (cs.getMoreResults()) {
+                    try (ResultSet rs2 = cs.getResultSet()) {
+                        if (rs2.next()) {
+                            ResultSetMetaData meta2 = rs2.getMetaData();
+                            int cols2 = meta2.getColumnCount();
+
+                            // Footer has the same column count as detail rows
+                            int detailCols = rows.isEmpty() ? cols2
+                                           : rows.get(0).length;
+                            String[] footer = new String[detailCols];
+
+                            // Fill from the right (last col = the aggregate value)
+                            for (int c = 1; c <= cols2 && c <= detailCols; c++) {
+                                String val = rs2.getString(c);
+                                footer[detailCols - cols2 + c - 1] =
+                                    (val != null) ? val : "-";
+                            }
+
+                            // Label in the first cell (e.g. "TOTAL", "AVERAGE")
+                            if (detailCols > cols2) {
+                                footer[0] = rs2.getMetaData()
+                                               .getColumnLabel(1)
+                                               .toUpperCase();
+                            }
+
+                            rows.add(footer);
+                        }
+                    }
+                }
             }
+
         } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", "", "", String.format("%,.2f", total)});
-        return rows;
-    }
-
-    // Q2 — Average Payment
-    private static List<String[]> opAverage(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment ID", "Order ID", "Method", "Amount"});
-        if (!isConnOpen(conn)) return rows;
-
-        double avg = 0;
-        String avgSql =
-            "SELECT ROUND(AVG(amount), 2) AS avg_amount " +
-            "FROM   dbo.Payments " +
-            "WHERE  is_deleted = 0 AND status = 'active'";
-        try (PreparedStatement ps2 = conn.prepareStatement(avgSql);
-             ResultSet rs2 = ps2.executeQuery()) {
-            if (rs2.next()) avg = rs2.getDouble("avg_amount");
-        } catch (Exception ignored) {}
-
-        String sql =
-            "SELECT payment_id, order_id, payment_method, amount " +
-            "FROM   dbo.Payments " +
-            "WHERE  is_deleted = 0 AND status = 'active' " +
-            "ORDER  BY payment_date DESC";
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                rows.add(new String[]{
-                    rs.getString("payment_id"),
-                    rs.getString("order_id"),
-                    rs.getString("payment_method"),
-                    String.format("%,.2f", rs.getDouble("amount"))
-                });
+            e.printStackTrace();
+            // Surface the error as the first (and only) data row so the UI
+            // can display it inside the analytics result table.
+            if (!rows.isEmpty()) {
+                int cols = rows.get(0).length;
+                String[] errRow = new String[cols];
+                errRow[0] = "Error: " + e.getMessage();
+                for (int i = 1; i < cols; i++) errRow[i] = "";
+                rows.add(errRow);
+            } else {
+                rows.add(new String[]{ "Error: " + e.getMessage() });
             }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
         }
-        rows.add(new String[]{"AVERAGE", "", "", String.format("%,.2f", avg)});
-        return rows;
-    }
 
-    // Q3 — Transaction Count
-    private static List<String[]> opCount(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment Method", "Transactions", "Volume"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT payment_method, " +
-            "       COUNT(payment_id) AS total_transactions, " +
-            "       CASE WHEN COUNT(payment_id) >= 10 THEN 'High' " +
-            "            WHEN COUNT(payment_id) >= 5  THEN 'Medium' " +
-            "            ELSE 'Low' END AS volume " +
-            "FROM   dbo.Payments " +
-            "WHERE  is_deleted = 0 AND status = 'active' " +
-            "GROUP  BY payment_method " +
-            "HAVING COUNT(payment_id) >= 1 " +
-            "ORDER  BY COUNT(payment_id) DESC";
-        int grandCount = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                int cnt = rs.getInt("total_transactions");
-                grandCount += cnt;
-                rows.add(new String[]{
-                    rs.getString("payment_method"),
-                    String.valueOf(cnt),
-                    rs.getString("volume")
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", String.valueOf(grandCount), ""});
-        return rows;
-    }
-
-    // Q4 — Highest Payment
-    private static List<String[]> opHighest(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment ID", "Customer", "Method", "Amount"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT TOP 10 p.payment_id, c.customer_name, p.payment_method, p.amount " +
-            "FROM   dbo.Payments  AS p " +
-            "INNER JOIN dbo.Orders    AS o ON p.order_id    = o.order_id " +
-            "INNER JOIN dbo.Customers AS c ON o.customer_id = c.customer_id " +
-            "WHERE  p.is_deleted = 0 AND p.status = 'active' AND o.is_deleted = 0 " +
-            "ORDER  BY p.amount DESC";
-        double max = 0;
-        boolean first = true;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double amt = rs.getDouble("amount");
-                if (first) { max = amt; first = false; }
-                rows.add(new String[]{
-                    rs.getString("payment_id"),
-                    rs.getString("customer_name"),
-                    rs.getString("payment_method"),
-                    String.format("%,.2f", amt)
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
-        }
-        rows.add(new String[]{"HIGHEST", "", "", String.format("%,.2f", max)});
-        return rows;
-    }
-
-    // Q5 — Lowest Payment
-    private static List<String[]> opLowest(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment ID", "Customer", "Method", "Amount"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT TOP 10 p.payment_id, c.customer_name, p.payment_method, p.amount " +
-            "FROM   dbo.Payments  AS p " +
-            "INNER JOIN dbo.Orders    AS o ON p.order_id    = o.order_id " +
-            "INNER JOIN dbo.Customers AS c ON o.customer_id = c.customer_id " +
-            "WHERE  p.is_deleted = 0 AND p.status = 'active' AND o.is_deleted = 0 " +
-            "ORDER  BY p.amount ASC";
-        double min = Double.MAX_VALUE;
-        boolean first = true;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double amt = rs.getDouble("amount");
-                if (first) { min = amt; first = false; }
-                rows.add(new String[]{
-                    rs.getString("payment_id"),
-                    rs.getString("customer_name"),
-                    rs.getString("payment_method"),
-                    String.format("%,.2f", amt)
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
-        }
-        if (min == Double.MAX_VALUE) min = 0;
-        rows.add(new String[]{"LOWEST", "", "", String.format("%,.2f", min)});
-        return rows;
-    }
-
-    // Q6 — By Payment Method
-    private static List<String[]> opByMethod(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Method", "Transactions", "Total", "Average", "Lowest", "Highest"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT payment_method, " +
-            "       COUNT(payment_id)      AS transactions, " +
-            "       SUM(amount)            AS total, " +
-            "       ROUND(AVG(amount), 2)  AS average, " +
-            "       MIN(amount)            AS lowest, " +
-            "       MAX(amount)            AS highest " +
-            "FROM   dbo.Payments " +
-            "WHERE  is_deleted = 0 " +
-            "  AND  (status = 'active' OR status = 'archived') " +
-            "GROUP  BY payment_method " +
-            "HAVING COUNT(payment_id) >= 1 " +
-            "ORDER  BY SUM(amount) DESC";
-        double grandTotal = 0;
-        int    grandCount = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double t = rs.getDouble("total");
-                grandTotal += t;
-                grandCount += rs.getInt("transactions");
-                rows.add(new String[]{
-                    rs.getString("payment_method"),
-                    String.valueOf(rs.getInt("transactions")),
-                    String.format("%,.2f", t),
-                    String.format("%,.2f", rs.getDouble("average")),
-                    String.format("%,.2f", rs.getDouble("lowest")),
-                    String.format("%,.2f", rs.getDouble("highest"))
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", "", "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", String.valueOf(grandCount),
-            String.format("%,.2f", grandTotal), "", "", ""});
-        return rows;
-    }
-
-    // Q7 — By Customer (above-average spenders only)
-    private static List<String[]> opByCustomer(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Customer", "Payments", "Total Spent"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT c.customer_name, " +
-            "       COUNT(p.payment_id) AS payments, " +
-            "       SUM(p.amount)       AS total_spent " +
-            "FROM   dbo.Payments  AS p " +
-            "INNER JOIN dbo.Orders    AS o  ON p.order_id    = o.order_id " +
-            "INNER JOIN dbo.Customers AS c  ON o.customer_id = c.customer_id " +
-            "WHERE  p.is_deleted = 0 AND p.status = 'active' AND o.is_deleted = 0 " +
-            "GROUP  BY c.customer_name " +
-            "HAVING SUM(p.amount) > (" +
-            "    SELECT AVG(sub_total) FROM (" +
-            "        SELECT SUM(p2.amount) AS sub_total " +
-            "        FROM   dbo.Payments AS p2 " +
-            "        INNER JOIN dbo.Orders AS o2 ON p2.order_id = o2.order_id " +
-            "        WHERE  p2.is_deleted = 0 " +
-            "        GROUP  BY o2.customer_id" +
-            "    ) AS sub" +
-            ") " +
-            "ORDER  BY total_spent DESC";
-        double grandTotal = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double t = rs.getDouble("total_spent");
-                grandTotal += t;
-                rows.add(new String[]{
-                    rs.getString("customer_name"),
-                    String.valueOf(rs.getInt("payments")),
-                    String.format("%,.2f", t)
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", "", String.format("%,.2f", grandTotal)});
-        return rows;
-    }
-
-    // Q8 — Daily Totals
-    private static List<String[]> opDaily(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Date", "Transactions", "Daily Total", "Daily Avg"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT p.payment_date, " +
-            "       COUNT(p.payment_id)    AS transactions, " +
-            "       SUM(p.amount)          AS daily_total, " +
-            "       ROUND(AVG(p.amount),2) AS daily_avg " +
-            "FROM   dbo.Payments AS p " +
-            "INNER JOIN dbo.Orders AS o ON p.order_id = o.order_id " +
-            "WHERE  p.is_deleted = 0 AND p.status = 'active' AND o.is_deleted = 0 " +
-            "GROUP  BY p.payment_date " +
-            "ORDER  BY p.payment_date DESC";
-        double grandTotal = 0;
-        int    grandCount = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double dt = rs.getDouble("daily_total");
-                grandTotal += dt;
-                grandCount += rs.getInt("transactions");
-                rows.add(new String[]{
-                    rs.getString("payment_date") != null ? rs.getString("payment_date") : "-",
-                    String.valueOf(rs.getInt("transactions")),
-                    String.format("%,.2f", dt),
-                    String.format("%,.2f", rs.getDouble("daily_avg"))
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", String.valueOf(grandCount),
-            String.format("%,.2f", grandTotal), ""});
-        return rows;
-    }
-
-    // Q9 — Above-Average Orders
-    private static List<String[]> opAboveAverage(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Payment ID", "Customer", "Method", "Amount"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT p.payment_id, c.customer_name, p.payment_method, p.amount " +
-            "FROM   dbo.Payments  AS p " +
-            "INNER JOIN dbo.Orders    AS o ON p.order_id    = o.order_id " +
-            "INNER JOIN dbo.Customers AS c ON o.customer_id = c.customer_id " +
-            "WHERE  p.is_deleted = 0 AND p.status = 'active' AND o.is_deleted = 0 " +
-            "  AND  p.amount > (SELECT AVG(amount) FROM dbo.Payments " +
-            "                   WHERE is_deleted = 0 AND status = 'active') " +
-            "ORDER  BY p.amount DESC";
-        double total = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                double amt = rs.getDouble("amount");
-                total += amt;
-                rows.add(new String[]{
-                    rs.getString("payment_id"),
-                    rs.getString("customer_name"),
-                    rs.getString("payment_method"),
-                    String.format("%,.2f", amt)
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", "", ""}); return rows;
-        }
-        rows.add(new String[]{"TOTAL", "", "", String.format("%,.2f", total)});
-        return rows;
-    }
-
-    // Q10 — Customers with No Orders/Payments
-    private static List<String[]> opNoPayments(Connection conn) {
-        List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"Customer ID", "Name", "Email"});
-        if (!isConnOpen(conn)) return rows;
-
-        String sql =
-            "SELECT customer_id, customer_name, customer_email " +
-            "FROM   dbo.Customers " +
-            "WHERE  is_deleted = 0 " +
-            "  AND  (customer_id NOT IN ( " +
-            "            SELECT o.customer_id " +
-            "            FROM   dbo.Orders    AS o " +
-            "            INNER JOIN dbo.Payments AS p ON o.order_id = p.order_id " +
-            "            WHERE  o.is_deleted = 0 AND p.is_deleted = 0 " +
-            "        ) OR customer_name IS NULL) " +
-            "ORDER  BY customer_name ASC";
-        int count = 0;
-        try (PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                count++;
-                rows.add(new String[]{
-                    rs.getString("customer_id")    != null ? rs.getString("customer_id")    : "-",
-                    rs.getString("customer_name")  != null ? rs.getString("customer_name")  : "(none)",
-                    rs.getString("customer_email") != null ? rs.getString("customer_email") : "-"
-                });
-            }
-        } catch (Exception e) {
-            rows.add(new String[]{"Error: " + e.getMessage(), "", ""}); return rows;
-        }
-        rows.add(new String[]{"COUNT", String.valueOf(count), ""});
         return rows;
     }
 
     // ══════════════════════════════════════════════════════
-    //  INTERNAL HELPER
+    //  INTERNAL HELPERS
     // ══════════════════════════════════════════════════════
+
+    /** Returns "-" when a nullable DB string is null. */
+    private static String nvl(String value) {
+        return (value != null) ? value : "-";
+    }
+
+    /** Returns true when the connection is non-null and not closed. */
     private static boolean isConnOpen(Connection conn) {
         if (conn == null) return false;
         try { return !conn.isClosed(); } catch (Exception e) { return false; }

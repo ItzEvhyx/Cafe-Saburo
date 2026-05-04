@@ -47,6 +47,12 @@ public class promotions_util {
     private static final String SQL_UPDATE_END_DATE =
         "UPDATE promotions SET end_date = ? WHERE promo_id = ?";
 
+    private static final String SQL_UPDATE_PROMO_NAME =
+        "UPDATE promotions SET promo_name = ? WHERE promo_id = ?";
+
+    private static final String SQL_UPDATE_DISCOUNT_TYPE =
+        "UPDATE promotions SET discount_type = ? WHERE promo_id = ?";
+
     private static final String SQL_ARCHIVE_ONE =
         "UPDATE promotions SET status = 'archived' WHERE promo_id = ?";
 
@@ -191,6 +197,33 @@ public class promotions_util {
             ps.executeUpdate();
         } catch (SQLException e) {
             System.err.println("[promotions_util] updateDate error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Updates a text column (promo_name or discount_type) for a single promotion row.
+     *
+     * @param promoId  target row identifier
+     * @param colName  either "promo_name" or "discount_type"
+     * @param value    the new value to persist
+     */
+    public void updateTextField(String promoId, String colName, String value) {
+        if (conn == null) return;
+        String sql;
+        switch (colName) {
+            case "promo_name"    -> sql = SQL_UPDATE_PROMO_NAME;
+            case "discount_type" -> sql = SQL_UPDATE_DISCOUNT_TYPE;
+            default -> {
+                System.err.println("[promotions_util] updateTextField: unknown column '" + colName + "'");
+                return;
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, value);
+            ps.setString(2, promoId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("[promotions_util] updateTextField error: " + e.getMessage());
         }
     }
 

@@ -44,7 +44,7 @@ public class pos_records_window_ui {
     //  CARD 2 CONFIGURATION
     // ══════════════════════════════════════════════════════
     private static final double CARD2_Y = 360;
-    private static final double CARD2_H = 310;   // ← increased to fit extra button
+    private static final double CARD2_H = 310;   
 
     // ══════════════════════════════════════════════════════
     //  CARD 3 CONFIGURATION
@@ -76,11 +76,12 @@ public class pos_records_window_ui {
     private orders_contents      ordersContents;
     private customers_contents   customersContents;
     private payments_contents    paymentsContents;
-    private menu_items_contents  menuItemsContents;   // ← NEW
+    private menu_items_contents  menuItemsContents;
     private timelogs_contents    timelogsContents;
     private employees_contents   employeesContents;
     private inventory_contents   inventoryContents;
     private suppliers_contents   suppliersContents;
+    private ingredients_contents ingredientsContents;   // ← NEW
     private purchases_contents   purchasesContents;
     private promotions_contents  promotionsContents;
 
@@ -143,17 +144,18 @@ public class pos_records_window_ui {
         double contentW = screenW - CONTENT_X - 10;
 
         // ── Instantiate all content views ─────────────────
-        menuContents       = new menu_contents(contentW, CONTENT_H, conn);
-        ordersContents     = new orders_contents(contentW, CONTENT_H, conn);
-        customersContents  = new customers_contents(contentW, CONTENT_H, conn);
-        paymentsContents   = new payments_contents(contentW, CONTENT_H, conn);
-        menuItemsContents  = new menu_items_contents(contentW, CONTENT_H, conn);  // ← NEW
-        timelogsContents   = new timelogs_contents(contentW, CONTENT_H, conn);
-        employeesContents  = new employees_contents(contentW, CONTENT_H, conn);
-        inventoryContents  = new inventory_contents(contentW, CONTENT_H, conn);
-        suppliersContents  = new suppliers_contents(contentW, CONTENT_H, conn);
-        purchasesContents  = new purchases_contents(contentW, CONTENT_H, conn);
-        promotionsContents = new promotions_contents(contentW, CONTENT_H, conn);
+        menuContents        = new menu_contents(contentW, CONTENT_H, conn);
+        ordersContents      = new orders_contents(contentW, CONTENT_H, conn);
+        customersContents   = new customers_contents(contentW, CONTENT_H, conn);
+        paymentsContents    = new payments_contents(contentW, CONTENT_H, conn);
+        menuItemsContents   = new menu_items_contents(contentW, CONTENT_H, conn);
+        timelogsContents    = new timelogs_contents(contentW, CONTENT_H, conn);
+        employeesContents   = new employees_contents(contentW, CONTENT_H, conn);
+        inventoryContents   = new inventory_contents(contentW, CONTENT_H, conn);
+        suppliersContents   = new suppliers_contents(contentW, CONTENT_H, conn);
+        ingredientsContents = new ingredients_contents(contentW, CONTENT_H, conn);   // ← NEW
+        purchasesContents   = new purchases_contents(contentW, CONTENT_H, conn);
+        promotionsContents  = new promotions_contents(contentW, CONTENT_H, conn);
 
         // ── Cross-view live-update wiring ─────────────────
         menuContents.setOnOrderSubmitted(result -> {
@@ -198,7 +200,7 @@ public class pos_records_window_ui {
         //  CARD 2 — manager-only buttons, scrollable
         //  Order: Payments → Menu Items → Time Logs →
         //         Employees → Inventory → Suppliers →
-        //         Purchases → Promotions
+        //         Ingredients → Purchases → Promotions
         // ══════════════════════════════════════════════════
         Label managerLabel = new Label("— Manager only —");
         managerLabel.setStyle(
@@ -212,22 +214,25 @@ public class pos_records_window_ui {
         managerLabel.setAlignment(Pos.CENTER);
         VBox.setMargin(managerLabel, new Insets(0, 0, 2, 0));
 
-        HBox paymentsBtn   = createNavButton("Payments",   "assets/icons/payments_icon.png",    38, 20, isManager);
-        HBox menuItemsBtn  = createNavButton("Menu Items", "assets/icons/menu_items_icon.png",  38, 20, isManager); // ← NEW
-        HBox timeLogsBtn   = createNavButton("Time Logs",  "assets/icons/timelogs_icon.png",    38, 20, isManager);
-        HBox employeesBtn  = createNavButton("Employees",  "assets/icons/employees_icon.png",   38, 20, isManager);
-        HBox inventoryBtn  = createNavButton("Inventory",  "assets/icons/inventory_icon.png",   38, 20, isManager);
-        HBox suppliersBtn  = createNavButton("Suppliers",  "assets/icons/suppliers_icon.png",   38, 20, isManager);
-        HBox purchasesBtn  = createNavButton("Purchases",  "assets/icons/purchases_icon.png",   38, 20, isManager);
-        HBox promotionsBtn = createNavButton("Promotions", "assets/icons/promotions_icon.png",  38, 20, isManager);
+        HBox paymentsBtn     = createNavButton("Payments",    "assets/icons/payments_icon.png",     38, 20, isManager);
+        HBox menuItemsBtn    = createNavButton("Menu Items",  "assets/icons/menu_items_icon.png",   38, 20, isManager);
+        HBox timeLogsBtn     = createNavButton("Time Logs",   "assets/icons/timelogs_icon.png",     38, 20, isManager);
+        HBox employeesBtn    = createNavButton("Employees",   "assets/icons/employees_icon.png",    38, 20, isManager);
+        HBox inventoryBtn    = createNavButton("Inventory",   "assets/icons/inventory_icon.png",    38, 20, isManager);
+        HBox suppliersBtn    = createNavButton("Suppliers",   "assets/icons/suppliers_icon.png",    38, 20, isManager);
+        HBox ingredientsBtn  = createNavButtonIkon("Ingredients", FontAwesomeSolid.SEEDLING,        38, 20, isManager);  // ← NEW (Ikonli icon)
+        HBox purchasesBtn    = createNavButton("Purchases",   "assets/icons/purchases_icon.png",    38, 20, isManager);
+        HBox promotionsBtn   = createNavButton("Promotions",  "assets/icons/promotions_icon.png",   38, 20, isManager);
 
         VBox card2Inner = new VBox(7);
         card2Inner.setAlignment(Pos.CENTER_LEFT);
         card2Inner.setPadding(new Insets(6, 6, 6, 6));
         card2Inner.getChildren().addAll(
             managerLabel,
-            paymentsBtn, menuItemsBtn, timeLogsBtn, employeesBtn,   // ← menuItemsBtn after paymentsBtn
-            inventoryBtn, suppliersBtn, purchasesBtn, promotionsBtn
+            paymentsBtn, menuItemsBtn, timeLogsBtn, employeesBtn,
+            inventoryBtn, suppliersBtn,
+            ingredientsBtn,   // ← beneath Suppliers
+            purchasesBtn, promotionsBtn
         );
 
         ScrollPane card2Scroll = new ScrollPane(card2Inner);
@@ -280,16 +285,17 @@ public class pos_records_window_ui {
         ordersBtn.setOnMouseClicked(e    -> showOrders());
         customersBtn.setOnMouseClicked(e -> showCustomers());
 
-        // ── Card 2 wiring (managers only) ───────────��─────
+        // ── Card 2 wiring (managers only) ─────────────────
         if (isManager) {
-            paymentsBtn.setOnMouseClicked(e   -> showPayments());
-            menuItemsBtn.setOnMouseClicked(e  -> showMenuItems());   // ← NEW
-            timeLogsBtn.setOnMouseClicked(e   -> showTimeLogs());
-            employeesBtn.setOnMouseClicked(e  -> showEmployees());
-            inventoryBtn.setOnMouseClicked(e  -> showInventory());
-            suppliersBtn.setOnMouseClicked(e  -> showSuppliers());
-            purchasesBtn.setOnMouseClicked(e  -> showPurchases());
-            promotionsBtn.setOnMouseClicked(e -> showPromotions());
+            paymentsBtn.setOnMouseClicked(e     -> showPayments());
+            menuItemsBtn.setOnMouseClicked(e    -> showMenuItems());
+            timeLogsBtn.setOnMouseClicked(e     -> showTimeLogs());
+            employeesBtn.setOnMouseClicked(e    -> showEmployees());
+            inventoryBtn.setOnMouseClicked(e    -> showInventory());
+            suppliersBtn.setOnMouseClicked(e    -> showSuppliers());
+            ingredientsBtn.setOnMouseClicked(e  -> showIngredients());   // ← NEW
+            purchasesBtn.setOnMouseClicked(e    -> showPurchases());
+            promotionsBtn.setOnMouseClicked(e   -> showPromotions());
         }
 
         // ── Start live clock ──────────────────────────────
@@ -391,7 +397,7 @@ public class pos_records_window_ui {
 
     // ══════════════════════════════════════════════════════
     //  SHIFT CLOCK
-    // ════════════════════════════════════════════════════���═
+    // ══════════════════════════════════════════════════════
     private void startShiftClock() {
         shiftClock = new Timeline(
             new KeyFrame(Duration.seconds(1), e -> {
@@ -528,7 +534,7 @@ public class pos_records_window_ui {
         contentPane.getChildren().setAll(paymentsContents.getView());
     }
     private void showMenuItems() {
-        contentPane.getChildren().setAll(menuItemsContents.getView());   // ← NEW
+        contentPane.getChildren().setAll(menuItemsContents.getView());
     }
     private void showTimeLogs() {
         contentPane.getChildren().setAll(timelogsContents.getView());
@@ -542,6 +548,9 @@ public class pos_records_window_ui {
     private void showSuppliers() {
         contentPane.getChildren().setAll(suppliersContents.getView());
     }
+    private void showIngredients() {
+        contentPane.getChildren().setAll(ingredientsContents.getView());   // ← NEW
+    }
     private void showPurchases() {
         contentPane.getChildren().setAll(purchasesContents.getView());
     }
@@ -550,7 +559,7 @@ public class pos_records_window_ui {
     }
 
     // ══════════════════════════════════════════════════════
-    //  NAV BUTTON FACTORY
+    //  NAV BUTTON FACTORY — image-based icon (existing)
     // ══════════════════════════════════════════════════════
     private HBox createNavButton(String label, String iconPath,
                                   double iconSize, double fontSize,
@@ -615,8 +624,74 @@ public class pos_records_window_ui {
     }
 
     // ══════════════════════════════════════════════════════
+    //  NAV BUTTON FACTORY — Ikonli FontIcon (no image file)
+    //  Used for Ingredients (FontAwesomeSolid.SEEDLING)
+    // ══════════════════════════════════════════════════════
+    private HBox createNavButtonIkon(String label, FontAwesomeSolid iconCode,
+                                      double iconSize, double fontSize,
+                                      boolean unlocked) {
+        FontIcon icon = new FontIcon(iconCode);
+        icon.setIconSize((int) (iconSize * 0.55));   // scale to match image-based buttons
+
+        Label text = new Label(label);
+
+        if (unlocked) {
+            icon.setIconColor(Color.web(ACCENT));
+            text.setStyle(
+                "-fx-font-family: '" + FONT_FAMILY + "';" +
+                "-fx-font-size: " + fontSize + "px;" +
+                "-fx-font-weight: bold;" +
+                "-fx-text-fill: " + ACCENT + ";"
+            );
+            HBox row = new HBox(12, icon, text);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(6, 6, 6, 30));
+            row.setPrefWidth(CARD_W - 12);
+            row.setStyle("-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;");
+            row.setCursor(Cursor.HAND);
+            row.setOnMouseEntered(e -> row.setStyle(
+                "-fx-background-color: " + HOVER_BG + "; -fx-background-radius: 10;"));
+            row.setOnMouseExited(e -> row.setStyle(
+                "-fx-background-color: " + DEFAULT_BG + "; -fx-background-radius: 10;"));
+            return row;
+        } else {
+            icon.setIconColor(Color.web("#C8A0A4"));
+            icon.setOpacity(0.35);
+            text.setStyle(
+                "-fx-font-family: '" + FONT_FAMILY + "';" +
+                "-fx-font-size: " + fontSize + "px;" +
+                "-fx-font-weight: bold;" +
+                "-fx-text-fill: #C0C0C0;"
+            );
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            FontIcon lockIcon = new FontIcon(FontAwesomeSolid.LOCK);
+            lockIcon.setIconSize(13);
+            lockIcon.setIconColor(Color.web("#C8A0A4"));
+            HBox row = new HBox(12, icon, text, spacer, lockIcon);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(6, 12, 6, 30));
+            row.setPrefWidth(CARD_W - 12);
+            row.setStyle("-fx-background-color: #FAF3F4; -fx-background-radius: 10;");
+            row.setCursor(Cursor.DEFAULT);
+            Tooltip tip = new Tooltip("For managers only");
+            tip.setShowDelay(Duration.millis(200));
+            tip.setStyle(
+                "-fx-font-family: '" + FONT_FAMILY + "';" +
+                "-fx-font-size: 12px;" +
+                "-fx-background-color: #68222A;" +
+                "-fx-text-fill: white;" +
+                "-fx-background-radius: 6;" +
+                "-fx-padding: 4 10 4 10;"
+            );
+            Tooltip.install(row, tip);
+            return row;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════
     //  CARD 3 HELPER BUILDERS
-    // ══════════════════════════���═══════════════════════════
+    // ══════════════════════════════════════════════════════
     private Label buildInfoRow(FontAwesomeSolid iconCode, String key, String value) {
         Label iconLbl  = buildIconLabel(iconCode);
         Label keyLbl   = buildKeyLabel(key);

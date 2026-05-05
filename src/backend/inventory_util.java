@@ -20,7 +20,13 @@ import java.util.Set;
  * Holds all business logic, database operations, CSV export,
  * font loading, and data-filtering for the Inventory module.
  *
- * inventory_contents (UI) delegates every non-visual concern here.
+ * SCHEMA CHANGE:
+ *  dbo.Inventory no longer has an 'ingredient' VARCHAR column.
+ *  Instead it has ingredient_id (FK → dbo.Ingredients).
+ *  All queries now JOIN dbo.Ingredients to get ingredient_name.
+ *
+ *  dbo.Inventory columns: inventory_id, ingredient_id, quantity, unit, reorder_level, is_deleted, status
+ *  dbo.Ingredients columns: ingredient_id, ingredient_name, price, is_deleted, status
  */
 public class inventory_util {
 
@@ -46,9 +52,6 @@ public class inventory_util {
     //  DB HELPERS
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Returns true if the connection is usable, logging the reason if not.
-     */
     private static boolean isConnUsable(Connection conn, String caller) {
         if (conn == null) {
             System.err.println("[inventory_util] " + caller + ": conn is null");
@@ -72,19 +75,27 @@ public class inventory_util {
 
     /**
      * Fetches all non-deleted inventory rows for the given tab
-     * ("active" or "archived"), ordered alphabetically by ingredient.
+     * ("active" or "archived"), ordered alphabetically by ingredient name.
      *
-     * Returns rows as String[5]: { inventory_id, ingredient, quantity, unit, reorder_level }
+     * Returns rows as String[5]:
+     *   { inventory_id, ingredient_name, quantity, unit, reorder_level }
+     *
+     * Joins dbo.Ingredients to resolve ingredient_name from ingredient_id.
      */
     public static List<String[]> fetchInventory(Connection conn, String tab) {
         List<String[]> rows = new ArrayList<>();
         if (!isConnUsable(conn, "fetchInventory")) return rows;
 
+        // JOIN dbo.Ingredients to get ingredient_name — 'ingredient' column no longer exists on Inventory
         String sql =
-            "SELECT inventory_id, ingredient, quantity, unit, reorder_level " +
-            "FROM dbo.Inventory " +
-            "WHERE is_deleted = 0 AND status = ? " +
-            "ORDER BY ingredient ASC";
+            "SELECT inv.inventory_id, " +
+            "       ISNULL(ing.ingredient_name, N'—') AS ingredient_name, " +
+            "       inv.quantity, inv.unit, inv.reorder_level " +
+            "FROM   dbo.Inventory inv " +
+            "LEFT JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id " +
+            "                             AND ing.is_deleted = 0 " +
+            "WHERE  inv.is_deleted = 0 AND inv.[status] = ? " +
+            "ORDER  BY ing.ingredient_name ASC";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, tab);
@@ -93,15 +104,12 @@ public class inventory_util {
             try (ResultSet rs = ps.executeQuery()) {
                 int count = 0;
                 while (rs.next()) {
-                    // inventory_id
                     String invId = rs.getString("inventory_id");
                     if (invId == null) invId = "—";
 
-                    // ingredient
-                    String ingredient = rs.getString("ingredient");
+                    String ingredient = rs.getString("ingredient_name");
                     if (ingredient == null) ingredient = "—";
 
-                    // quantity: DECIMAL(10,2) — read as BigDecimal to avoid driver quirks
                     String qtyStr;
                     try {
                         java.math.BigDecimal bd = rs.getBigDecimal("quantity");
@@ -109,7 +117,6 @@ public class inventory_util {
                             qtyStr = "0";
                         } else {
                             bd = bd.stripTrailingZeros();
-                            // Avoid scientific notation for whole numbers
                             qtyStr = bd.scale() <= 0
                                 ? bd.toBigIntegerExact().toString()
                                 : bd.toPlainString();
@@ -121,12 +128,9 @@ public class inventory_util {
                             : String.valueOf(d);
                     }
 
-                    // unit
                     String unit = rs.getString("unit");
                     if (unit == null) unit = "—";
 
-                    // reorder_level: INT — use getInt() directly; getString() on INT
-                    // can return null on some JDBC drivers
                     String reorderStr;
                     try {
                         int reorder = rs.getInt("reorder_level");
@@ -151,11 +155,55 @@ public class inventory_util {
     }
 
     // ══════════════════════════════════════════════════════
+    //  FETCH ALL ACTIVE
+    //  Used by the Add/Edit Supplier modal to populate the
+    //  ingredient checkbox list.
+    //
+    //  Returns List<String[2]>:
+    //    [0] inventory_id
+    //    [1] ingredient_name  (from dbo.Ingredients)
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * Returns every non-deleted active inventory item for use in selector UIs.
+     * Each String[2] contains: { inventory_id, ingredient_name }
+     */
+    public static List<String[]> fetchAllActive(Connection conn) {
+        List<String[]> rows = new ArrayList<>();
+        if (!isConnUsable(conn, "fetchAllActive")) return rows;
+
+        String sql =
+            "SELECT inv.inventory_id, ISNULL(ing.ingredient_name, N'—') AS ingredient_name " +
+            "FROM   dbo.Inventory inv " +
+            "JOIN   dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id " +
+            "                          AND ing.is_deleted = 0 " +
+            "WHERE  inv.is_deleted = 0 AND inv.[status] = 'active' " +
+            "ORDER  BY ing.ingredient_name ASC";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String invId  = rs.getString("inventory_id");
+                String ingred = rs.getString("ingredient_name");
+                if (invId  == null) invId  = "";
+                if (ingred == null) ingred = "—";
+                rows.add(new String[]{ invId, ingred });
+            }
+            System.out.println("[inventory_util] fetchAllActive: loaded " + rows.size() + " active ingredient(s)");
+        } catch (Exception e) {
+            System.err.println("[inventory_util] fetchAllActive ERROR: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return rows;
+    }
+
+    // ══════════════════════════════════════════════════════
     //  UPDATE
     // ══════════════════════════════════════════════════════
 
     /**
      * Updates the quantity and reorder_level for the given inventory_id.
+     * ingredient_id is managed by dbo.Ingredients — not updated here.
      */
     public static void updateIngredient(Connection conn, String inventoryId,
                                         int quantity, int reorderLevel) {
@@ -174,14 +222,11 @@ public class inventory_util {
     //  ARCHIVE / RESTORE
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Sets status = 'archived' for each id in the given set.
-     */
     public static void archiveSelected(Connection conn, Set<String> ids) {
         if (!isConnUsable(conn, "archiveSelected") || ids.isEmpty()) return;
         for (String id : ids) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Inventory SET status = 'archived' " +
+                    "UPDATE dbo.Inventory SET [status] = 'archived' " +
                     "WHERE inventory_id = ? AND is_deleted = 0")) {
                 ps.setString(1, id);
                 ps.executeUpdate();
@@ -189,14 +234,11 @@ public class inventory_util {
         }
     }
 
-    /**
-     * Sets status = 'active' for each id in the given set.
-     */
     public static void restoreSelected(Connection conn, Set<String> ids) {
         if (!isConnUsable(conn, "restoreSelected") || ids.isEmpty()) return;
         for (String id : ids) {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Inventory SET status = 'active' " +
+                    "UPDATE dbo.Inventory SET [status] = 'active' " +
                     "WHERE inventory_id = ? AND is_deleted = 0")) {
                 ps.setString(1, id);
                 ps.executeUpdate();
@@ -208,14 +250,11 @@ public class inventory_util {
     //  HARD DELETE
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Soft-deletes (is_deleted = 1) all rows for the given tab.
-     */
     public static void hardDeleteAll(Connection conn, String currentTab) {
         if (!isConnUsable(conn, "hardDeleteAll")) return;
         try (PreparedStatement ps = conn.prepareStatement(
                 "UPDATE dbo.Inventory SET is_deleted = 1 " +
-                "WHERE is_deleted = 0 AND status = ?")) {
+                "WHERE is_deleted = 0 AND [status] = ?")) {
             ps.setString(1, currentTab);
             ps.executeUpdate();
         } catch (Exception e) { e.printStackTrace(); }
@@ -226,15 +265,36 @@ public class inventory_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Inserts a new ingredient row, auto-generating the next INV-NNNN id.
+     * Inserts a new inventory row, auto-generating the next INV-NNNN id.
+     * Looks up ingredient_id from dbo.Ingredients by ingredient_name.
+     * If the ingredient name doesn't exist in dbo.Ingredients, returns null.
      *
      * @return the generated inventory_id, or null on failure.
      */
-    public static String insertIngredient(Connection conn, String ingredient,
+    public static String insertIngredient(Connection conn, String ingredientName,
                                           int quantity, String unit, int reorderLevel) {
         if (!isConnUsable(conn, "insertIngredient")) return null;
 
-        // Generate next id by finding the max existing numeric suffix
+        // Step 1 — resolve ingredient_id from dbo.Ingredients by name
+        String ingredientId = null;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ingredient_id FROM dbo.Ingredients " +
+                "WHERE ingredient_name = ? AND is_deleted = 0")) {
+            ps.setString(1, ingredientName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) ingredientId = rs.getString("ingredient_id");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        if (ingredientId == null) {
+            System.err.println("[inventory_util] insertIngredient: no Ingredients row found for name='" + ingredientName + "'");
+            return null;
+        }
+
+        // Step 2 — generate next INV-NNNN id
         String newId = null;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT MAX(CAST(SUBSTRING(inventory_id, 5, LEN(inventory_id)) AS INT)) AS max_num " +
@@ -253,16 +313,17 @@ public class inventory_util {
 
         if (newId == null) return null;
 
+        // Step 3 — insert the inventory row with ingredient_id (not ingredient name)
         try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO dbo.Inventory (inventory_id, ingredient, quantity, unit, reorder_level) " +
+                "INSERT INTO dbo.Inventory (inventory_id, ingredient_id, quantity, unit, reorder_level) " +
                 "VALUES (?, ?, ?, ?, ?)")) {
             ps.setString(1, newId);
-            ps.setString(2, ingredient);
-            ps.setInt(3, quantity);
+            ps.setString(2, ingredientId);
+            ps.setInt   (3, quantity);
             ps.setString(4, unit);
-            ps.setInt(5, reorderLevel);
+            ps.setInt   (5, reorderLevel);
             ps.executeUpdate();
-            System.out.println("[inventory_util] insertIngredient: inserted " + newId);
+            System.out.println("[inventory_util] insertIngredient: inserted " + newId + " linked to " + ingredientId);
             return newId;
         } catch (Exception e) {
             e.printStackTrace();
@@ -275,16 +336,15 @@ public class inventory_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Returns the subset of rows whose ingredient name or inventory_id
-     * contains the search query (case-insensitive).
-     * If the query is blank, the full list is returned as-is.
+     * Filters rows by inventory_id or ingredient name (row[1]).
      */
     public static List<String[]> getFilteredRows(List<String[]> cachedRows, String searchQuery) {
         if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
         String q = searchQuery.trim().toLowerCase();
         List<String[]> filtered = new ArrayList<>();
         for (String[] row : cachedRows) {
-            if (row[1].toLowerCase().contains(q) || row[0].toLowerCase().contains(q))
+            if (row[0].toLowerCase().contains(q) ||   // inventory_id
+                row[1].toLowerCase().contains(q))     // ingredient_name
                 filtered.add(row);
         }
         return filtered;
@@ -294,13 +354,6 @@ public class inventory_util {
     //  CSV EXPORT
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Opens a save-file dialog and writes the cached rows to a CSV.
-     *
-     * @param cachedRows  the current in-memory rows
-     * @param currentTab  used to suggest a default filename
-     * @param ownerStage  the JavaFX stage to anchor the dialog to (may be null)
-     */
     public static void exportCsv(List<String[]> cachedRows, String currentTab, Stage ownerStage) {
         if (cachedRows.isEmpty()) return;
 
@@ -328,7 +381,6 @@ public class inventory_util {
         } catch (Exception e) { e.printStackTrace(); }
     }
 
-    /** Wraps a CSV field in quotes if it contains commas, quotes, or newlines. */
     public static String escapeCsv(String value) {
         if (value == null) return "";
         if (value.contains(",") || value.contains("\"") || value.contains("\n"))
@@ -340,17 +392,12 @@ public class inventory_util {
     //  GENERAL HELPERS
     // ══════════════════════════════════════════════════════
 
-    /** Safe int parse; returns 0 on null, blank, or non-numeric input. */
     public static int parseIntSafe(String s) {
         if (s == null || s.isBlank()) return 0;
         try { return Integer.parseInt(s.trim()); }
         catch (NumberFormatException e) { return 0; }
     }
 
-    /**
-     * Validates that a unit string is one of the accepted values.
-     * Accepted values: ml, l, g, kg, pcs (case-insensitive).
-     */
     public static boolean isValidUnit(String unit) {
         if (unit == null) return false;
         for (String u : new String[]{"ml", "l", "g", "kg", "pcs"}) {

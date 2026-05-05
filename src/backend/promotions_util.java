@@ -24,18 +24,22 @@ import java.util.Set;
 public class promotions_util {
 
     // ══════════════════════════════════════════════════════
-    //  SQL QUERIES  (mirrors promotions_query.sql)
+    //  SQL QUERIES  (mirrors promotions_query.sql — T-SQL / SQL Server edition)
     // ══════════════════════════════════════════════════════
     private static final String SQL_FETCH_BY_STATUS =
         "SELECT promo_id, promo_name, discount_type, " +
-        "CAST(start_date AS VARCHAR) AS start_date, " +
-        "CAST(end_date   AS VARCHAR) AS end_date " +
+        "CAST(start_date AS VARCHAR(10)) AS start_date, " +
+        "CAST(end_date   AS VARCHAR(10)) AS end_date " +
         "FROM promotions WHERE status = ? ORDER BY created_at DESC";
 
+    // FIX: replaced PostgreSQL/MySQL LPAD(...) with T-SQL RIGHT(REPLICATE(...) + ..., 4)
     private static final String SQL_NEXT_ID =
-        "SELECT COALESCE('PRO-' || LPAD(" +
-        "CAST(MAX(CAST(SUBSTRING(promo_id, 5) AS INTEGER)) + 1 AS VARCHAR)," +
-        "4, '0'), 'PRO-0001') AS next_id FROM promotions";
+        "SELECT COALESCE(" +
+        "    'PRO-' + RIGHT(" +
+        "        REPLICATE('0', 4) + CAST(MAX(CAST(SUBSTRING(promo_id, 5, 4) AS INT)) + 1 AS VARCHAR(4))," +
+        "        4)," +
+        "    'PRO-0001') AS next_id " +
+        "FROM promotions";
 
     private static final String SQL_INSERT =
         "INSERT INTO promotions (promo_id, promo_name, discount_type, start_date, end_date, status) " +
@@ -83,7 +87,7 @@ public class promotions_util {
 
     /**
      * Fetches all promotion rows for the given status tab ("active" or "archived").
-     * Falls back to the 10 built-in sample rows when the connection is null or the
+     * Falls back to the 25 built-in sample rows when the connection is null or the
      * query fails.
      *
      * @param status "active" or "archived"
@@ -91,7 +95,7 @@ public class promotions_util {
      */
     public List<String[]> fetchPromotions(String status) {
         if (conn == null) {
-            return status.equals("active") ? getSampleData() : new ArrayList<>();
+            return status.equals("active") ? getSampleActiveData() : getSampleArchivedData();
         }
         List<String[]> rows = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement(SQL_FETCH_BY_STATUS)) {
@@ -109,7 +113,8 @@ public class promotions_util {
             }
         } catch (SQLException e) {
             System.err.println("[promotions_util] fetchPromotions error: " + e.getMessage());
-            if (status.equals("active")) return getSampleData();
+            if (status.equals("active"))   return getSampleActiveData();
+            if (status.equals("archived")) return getSampleArchivedData();
         }
         return rows;
     }
@@ -413,24 +418,54 @@ public class promotions_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  SAMPLE DATA FALLBACK  (mirrors promotions_setup.sql)
+    //  SAMPLE DATA FALLBACK  (mirrors the 25 rows in promotions_query.sql)
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Returns the 10 hard-coded sample promotions used when no DB connection exists.
-     */
-    public List<String[]> getSampleData() {
+    /** Active sample rows (16 rows). */
+    public List<String[]> getSampleActiveData() {
         List<String[]> rows = new ArrayList<>();
-        rows.add(new String[]{"PRO-0001", "Summer Splash Sale",       "Percentage (15%)",     "2025-06-01", "2025-06-30"});
-        rows.add(new String[]{"PRO-0002", "Mid-Year Mega Deals",      "Percentage (20%)",     "2025-07-01", "2025-07-15"});
-        rows.add(new String[]{"PRO-0003", "Back to School Bonanza",   "Fixed (₱200 Off)",     "2025-08-01", "2025-08-31"});
-        rows.add(new String[]{"PRO-0004", "Ber Month Kickoff",        "BOGO",                 "2025-09-01", "2025-09-10"});
-        rows.add(new String[]{"PRO-0005", "Holiday Early Bird",       "Percentage (25%)",     "2025-10-15", "2025-11-01"});
-        rows.add(new String[]{"PRO-0006", "November Payday Treat",    "Fixed (₱500 Off)",     "2025-11-15", "2025-11-16"});
-        rows.add(new String[]{"PRO-0007", "Christmas Countdown",      "Percentage (30%)",     "2025-12-01", "2025-12-25"});
-        rows.add(new String[]{"PRO-0008", "New Year New Savings",     "Percentage (10%)",     "2026-01-01", "2026-01-07"});
-        rows.add(new String[]{"PRO-0009", "Valentine's Day Special",  "Fixed (₱150 Off)",     "2026-02-10", "2026-02-14"});
-        rows.add(new String[]{"PRO-0010", "Anniversary Grand Sale",   "BOGO + Free Shipping", "2026-03-01", "2026-03-31"});
+        rows.add(new String[]{"PRO-0001", "Summer Splash Sale",        "Percentage (15%)",         "2025-06-01", "2025-06-30"});
+        rows.add(new String[]{"PRO-0002", "Mid-Year Mega Deals",       "Percentage (20%)",         "2025-07-01", "2025-07-15"});
+        rows.add(new String[]{"PRO-0003", "Back to School Bonanza",    "Fixed (500 Off)",          "2025-08-01", "2025-08-31"});
+        rows.add(new String[]{"PRO-0004", "Ber Month Kickoff",         "BOGO",                     "2025-09-01", "2025-09-10"});
+        rows.add(new String[]{"PRO-0005", "Holiday Early Bird",        "Percentage (25%)",         "2025-10-15", "2025-11-01"});
+        rows.add(new String[]{"PRO-0006", "November Payday Treat",     "Fixed (500 Off)",          "2025-11-15", "2025-11-16"});
+        rows.add(new String[]{"PRO-0007", "Christmas Countdown",       "Percentage (30%)",         "2025-12-01", "2025-12-25"});
+        rows.add(new String[]{"PRO-0008", "New Year New Savings",      "Percentage (10%)",         "2026-01-01", "2026-01-07"});
+        rows.add(new String[]{"PRO-0009", "Valentine's Day Special",   "Fixed (150 Off)",          "2026-02-10", "2026-02-14"});
+        rows.add(new String[]{"PRO-0010", "Anniversary Grand Sale",    "BOGO + Free Shipping",     "2026-03-01", "2026-03-31"});
+        rows.add(new String[]{"PRO-0011", "Spring Refresh Promo",      "Percentage (12%)",         "2026-04-01", "2026-04-15"});
+        rows.add(new String[]{"PRO-0012", "Labor Day Weekend Deal",    "Fixed (300 Off)",          "2026-05-01", "2026-05-04"});
+        rows.add(new String[]{"PRO-0013", "Mothers Day Bundle",        "BOGO",                     "2026-05-08", "2026-05-11"});
+        rows.add(new String[]{"PRO-0014", "Mid-Season Flash Sale",     "Percentage (18%)",         "2026-05-20", "2026-05-22"});
+        rows.add(new String[]{"PRO-0015", "Fathers Day Treat",         "Fixed (200 Off)",          "2026-06-12", "2026-06-16"});
+        rows.add(new String[]{"PRO-0016", "Independence Day Blowout",  "Percentage (22%)",         "2026-06-10", "2026-06-12"});
         return rows;
+    }
+
+    /** Archived sample rows (9 rows). */
+    public List<String[]> getSampleArchivedData() {
+        List<String[]> rows = new ArrayList<>();
+        rows.add(new String[]{"PRO-0017", "Back-to-Work Promo",        "Fixed (100 Off)",          "2026-01-08", "2026-01-15"});
+        rows.add(new String[]{"PRO-0018", "Rainy Season Deals",        "Percentage (8%)",          "2025-07-16", "2025-07-31"});
+        rows.add(new String[]{"PRO-0019", "Clearance Weekend",         "Percentage (35%)",         "2025-09-27", "2025-09-28"});
+        rows.add(new String[]{"PRO-0020", "All Saints Flash Sale",     "Fixed (250 Off)",          "2025-11-01", "2025-11-02"});
+        rows.add(new String[]{"PRO-0021", "Year-End Blowout",          "Percentage (40%)",         "2025-12-26", "2025-12-31"});
+        rows.add(new String[]{"PRO-0022", "Chinese New Year Special",  "BOGO",                     "2026-01-28", "2026-02-01"});
+        rows.add(new String[]{"PRO-0023", "Super Brand Day",           "Percentage (50%)",         "2026-02-28", "2026-02-28"});
+        rows.add(new String[]{"PRO-0024", "Holy Week Getaway Sale",    "Fixed (400 Off)",          "2026-04-01", "2026-04-05"});
+        rows.add(new String[]{"PRO-0025", "Earth Day Eco Promo",       "Percentage (5%)",          "2026-04-22", "2026-04-22"});
+        return rows;
+    }
+
+    /**
+     * Legacy single-method fallback kept for backward compatibility.
+     * Returns active sample rows only.
+     *
+     * @deprecated Use {@link #getSampleActiveData()} or {@link #getSampleArchivedData()} instead.
+     */
+    @Deprecated
+    public List<String[]> getSampleData() {
+        return getSampleActiveData();
     }
 }

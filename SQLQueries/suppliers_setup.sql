@@ -1,172 +1,172 @@
--- suppliers_setup.sql  |  Cafe Saburo POS — Suppliers Table Setup  |  T-SQL (SQL Server)
--- Creates Suppliers, Supplier_Ingredients (junction), and vw_Suppliers (STRING_AGG view).
--- Run AFTER inventory_setup.sql, BEFORE purchases_setup.sql. Run this file once.
+-- suppliers_setup.sql — Cafe Saburo POS: Suppliers + Supplier_Ingredients setup and seed data
+-- Dialect: T-SQL (SQL Server)
+-- Run AFTER ingredients_setup.sql and inventory_setup.sql, BEFORE purchases_setup.sql.
+--
+-- Supplier_Ingredients junction table links suppliers to ingredients via ingredient_id (FK → dbo.Ingredients).
+-- It also carries inventory_id (FK → dbo.Inventory) so purchases can resolve both the
+-- supplier and the specific stock record in one join.
+--
+-- The DROP block below is safe to re-run standalone.
 
-SET QUOTED_IDENTIFIER ON;
+-- ── STEP 1: Drop child tables first ───────────────────────────────────────────────────────────────
+IF OBJECT_ID('dbo.Purchases',            'U') IS NOT NULL DROP TABLE dbo.Purchases;
+GO
+IF OBJECT_ID('dbo.Supplier_Ingredients', 'U') IS NOT NULL DROP TABLE dbo.Supplier_Ingredients;
+GO
+IF OBJECT_ID('dbo.Suppliers',            'U') IS NOT NULL DROP TABLE dbo.Suppliers;
 GO
 
--- ── DROP: Remove dependents first so re-runs don't fail on FK/view conflicts ────────────────────
-IF OBJECT_ID('dbo.vw_Suppliers',          'V') IS NOT NULL DROP VIEW  dbo.vw_Suppliers;
-IF OBJECT_ID('dbo.Supplier_Ingredients',  'U') IS NOT NULL DROP TABLE dbo.Supplier_Ingredients;
-IF OBJECT_ID('dbo.Suppliers',             'U') IS NOT NULL DROP TABLE dbo.Suppliers;
-GO
-
--- ── CREATE TABLE: Suppliers with soft delete and active/archived status ──────────────────────────
+-- ── STEP 2: Create Suppliers ──────────────────────────────────────────────────────────────────────
 CREATE TABLE dbo.Suppliers (
-    supplier_id    VARCHAR(10)   NOT NULL PRIMARY KEY,
-    supplier_name  VARCHAR(100)  NOT NULL,
-    contact_info   VARCHAR(100)  NOT NULL,
-    address        VARCHAR(200)  NOT NULL,
-    is_deleted     BIT           NOT NULL DEFAULT 0,
-    [status]       VARCHAR(10)   NOT NULL DEFAULT 'active',
-    CONSTRAINT chk_sup_status CHECK ([status] IN ('active', 'archived'))
+    supplier_id    VARCHAR(10)     NOT NULL,
+    supplier_name  VARCHAR(100)    NOT NULL,
+    contact_info   VARCHAR(100)    NOT NULL DEFAULT '',
+    address        VARCHAR(200)    NOT NULL DEFAULT '',
+    is_deleted     BIT             NOT NULL DEFAULT 0,
+    [status]       VARCHAR(10)     NOT NULL DEFAULT 'active',
+
+    CONSTRAINT pk_suppliers    PRIMARY KEY (supplier_id),
+    CONSTRAINT chk_sup_status  CHECK ([status] IN ('active', 'archived'))
 );
 GO
 
--- ── CREATE TABLE: Supplier_Ingredients junction — maps each supplier to its inventory items ──────
+-- ── STEP 3: Create Supplier_Ingredients junction table ────────────────────────────────────────────
+-- ingredient_id → dbo.Ingredients (the master ingredient record, carries the name & price)
+-- inventory_id  → dbo.Inventory   (the stock record, carries quantity, unit, reorder level)
+-- Both FKs together let us answer: "which supplier supplies which ingredient, and where is it stocked?"
 CREATE TABLE dbo.Supplier_Ingredients (
-    supplier_id   VARCHAR(10)  NOT NULL,
-    inventory_id  VARCHAR(10)  NOT NULL,
-    CONSTRAINT pk_sup_ing
-        PRIMARY KEY (supplier_id, inventory_id),
-    CONSTRAINT fk_supIng_supplier
-        FOREIGN KEY (supplier_id)  REFERENCES dbo.Suppliers (supplier_id),
-    CONSTRAINT fk_supIng_inventory
-        FOREIGN KEY (inventory_id) REFERENCES dbo.Inventory (inventory_id)
+    supplier_id    VARCHAR(10)  NOT NULL,
+    ingredient_id  VARCHAR(10)  NOT NULL,
+    inventory_id   VARCHAR(10)  NOT NULL,
+
+    CONSTRAINT pk_sup_ing       PRIMARY KEY (supplier_id, ingredient_id),
+    CONSTRAINT fk_si_supplier   FOREIGN KEY (supplier_id)   REFERENCES dbo.Suppliers   (supplier_id),
+    CONSTRAINT fk_si_ingredient FOREIGN KEY (ingredient_id) REFERENCES dbo.Ingredients (ingredient_id),
+    CONSTRAINT fk_si_inventory  FOREIGN KEY (inventory_id)  REFERENCES dbo.Inventory   (inventory_id)
 );
 GO
 
--- ── CREATE VIEW: vw_Suppliers — exposes the 5-column shape Java fetchSuppliers() expects ─────────
--- Aggregates linked ingredient names into a comma-separated string via STRING_AGG.
--- Java should query this view instead of the base table to get the computed ingredients column.
-CREATE VIEW dbo.vw_Suppliers
-AS
-SELECT
-    s.supplier_id,
-    s.supplier_name,
-    ISNULL(
-        STRING_AGG(i.ingredient, ', ')
-        WITHIN GROUP (ORDER BY i.ingredient ASC),
-        '—'
-    )                       AS ingredients,
-    s.contact_info,
-    s.address,
-    s.[status],
-    s.is_deleted
-FROM       dbo.Suppliers            s
-LEFT JOIN  dbo.Supplier_Ingredients si ON si.supplier_id  = s.supplier_id
-LEFT JOIN  dbo.Inventory            i  ON i.inventory_id  = si.inventory_id
-                                       AND i.is_deleted   = 0
-GROUP BY
-    s.supplier_id,
-    s.supplier_name,
-    s.contact_info,
-    s.address,
-    s.[status],
-    s.is_deleted;
-GO
-
--- ── SEED: 15 suppliers ───────────────────────────────────────────────────────────────────────────
+-- ── STEP 4: Seed 15 suppliers ─────────────────────────────────────────────────────────────────────
 INSERT INTO dbo.Suppliers (supplier_id, supplier_name, contact_info, address) VALUES
-('SUP-0001', 'Benguet Brew Supply',           '+63 912 111 2233', '45 Session Road, Baguio City, Benguet'),
-('SUP-0002', 'Magnolia Dairy Distributors',   '+63 923 222 3344', '12 Dairy Lane, Quezon City, Metro Manila'),
-('SUP-0003', 'SweetBase Co.',                 '+63 934 333 4455', '78 Rizal Ave., Caloocan City, Metro Manila'),
-('SUP-0004', 'Aroma Flavor House',            '+63 945 444 5566', '33 Industrial Blvd., Pasig City, Metro Manila'),
-('SUP-0005', 'Niche Botanicals Inc.',         '+63 956 555 6677', '9 Botanical Ave., Marikina City, Metro Manila'),
-('SUP-0006', 'Continental Spreads PH',        '+63 967 666 7788', '22 Confection St., Mandaluyong City, Metro Manila'),
-('SUP-0007', 'Tropical Puree Solutions',      '+63 978 777 8899', '5 Orchard Road, Davao City, Davao del Sur'),
-('SUP-0008', 'Zen Matcha Trading',            '+63 989 888 9900', '17 Green Hill St., Cebu City, Cebu'),
-('SUP-0009', 'Fruity Refresh Distributors',   '+63 990 999 0011', '88 Citrus Drive, Cagayan de Oro, Misamis Oriental'),
-('SUP-0010', 'BlendPro Supplies',             '+63 912 100 2222', '60 Blend St., Las Piñas City, Metro Manila'),
-('SUP-0011', 'Crumbz & Toppings Co.',         '+63 923 200 3333', '14 Baker Lane, Antipolo City, Rizal'),
-('SUP-0012', 'GreenSip Alternatives',         '+63 934 300 4444', '3 Eco Ave., Taguig City, Metro Manila'),
-('SUP-0013', 'AquaPure Logistics',            '+63 945 400 5555', '101 Purified Blvd., Valenzuela City, Metro Manila'),
-('SUP-0014', 'CafeSupply Express',            '+63 956 500 6666', '55 Express Road, Makati City, Metro Manila'),
-('SUP-0015', 'Natures Pantry PH',             '+63 967 600 7777', '27 Harvest St., Santa Rosa City, Laguna');
+('SUP-0001', 'Agave & Co.',              '+63 912 001 0001', '1 Agave Lane, Makati City'),
+('SUP-0002', 'Baker''s Best',            '+63 912 002 0002', '2 Baker St., BGC, Taguig'),
+('SUP-0003', 'Berry Bliss Farms',        '+63 912 003 0003', '3 Berry Rd., Quezon City'),
+('SUP-0004', 'Café Essentials PH',       '+63 912 004 0004', '4 Brew Ave., Pasig City'),
+('SUP-0005', 'Eastern Spice Traders',    '+63 912 005 0005', '5 Spice St., Binondo, Manila'),
+('SUP-0006', 'Fruity Finds',             '+63 912 006 0006', '6 Fruit Blvd., Mandaluyong'),
+('SUP-0007', 'Global Syrup House',       '+63 912 007 0007', '7 Syrup Cir., Ortigas, Pasig'),
+('SUP-0008', 'Green Leaf Organics',      '+63 912 008 0008', '8 Leaf St., Marikina City'),
+('SUP-0009', 'Island Flavors Co.',       '+63 912 009 0009', '9 Tropics Dr., Paranaque'),
+('SUP-0010', 'Metro Powder Supplies',    '+63 912 010 0010', '10 Powder Rd., Caloocan City'),
+('SUP-0011', 'Nectar & Bloom',           '+63 912 011 0011', '11 Bloom St., Las Pinas City'),
+('SUP-0012', 'Premium Extract Co.',      '+63 912 012 0012', '12 Extract Ave., Muntinlupa'),
+('SUP-0013', 'Sweet Crunch Distributors','+63 912 013 0013', '13 Crunch Blvd., Valenzuela'),
+('SUP-0014', 'The Chocolate Source',     '+63 912 014 0014', '14 Choco Lane, San Juan City'),
+('SUP-0015', 'Vanilla & Friends',        '+63 912 015 0015', '15 Vanilla Rd., Pasay City');
 GO
 
--- ── SEED: Junction rows linking each supplier to its inventory items ─────────────────────────────
-INSERT INTO dbo.Supplier_Ingredients (supplier_id, inventory_id) VALUES
-('SUP-0001', 'INV-0001'),
+-- ── STEP 5: Seed Supplier_Ingredients junction rows ──────────────────────────────────────────────
+-- Format: (supplier_id, ingredient_id, inventory_id)
+-- ingredient_id = ING-NNNN, inventory_id = INV-NNNN (same number = same ingredient)
+INSERT INTO dbo.Supplier_Ingredients (supplier_id, ingredient_id, inventory_id) VALUES
 
-('SUP-0002', 'INV-0002'),
-('SUP-0002', 'INV-0009'),
-('SUP-0002', 'INV-0049'),
-('SUP-0002', 'INV-0048'),
+-- SUP-0001 Agave & Co. → Agave Syrup, Honey, Sugar Syrup
+('SUP-0001', 'ING-0001', 'INV-0001'),   -- Agave Syrup
+('SUP-0001', 'ING-0025', 'INV-0025'),   -- Honey
+('SUP-0001', 'ING-0045', 'INV-0045'),   -- Sugar Syrup
 
-('SUP-0003', 'INV-0005'),
-('SUP-0003', 'INV-0006'),
-('SUP-0003', 'INV-0012'),
-('SUP-0003', 'INV-0011'),
-('SUP-0003', 'INV-0010'),
+-- SUP-0002 Baker's Best → Banana Puree, Cheesecake Base, Cream Cheese, Whipped Cream
+('SUP-0002', 'ING-0002', 'INV-0002'),   -- Banana Puree
+('SUP-0002', 'ING-0009', 'INV-0009'),   -- Cheesecake Base
+('SUP-0002', 'ING-0012', 'INV-0012'),   -- Cream Cheese
+('SUP-0002', 'ING-0049', 'INV-0049'),   -- Whipped Cream
 
-('SUP-0004', 'INV-0013'),
-('SUP-0004', 'INV-0014'),
-('SUP-0004', 'INV-0015'),
-('SUP-0004', 'INV-0016'),
-('SUP-0004', 'INV-0017'),
-('SUP-0004', 'INV-0018'),
+-- SUP-0003 Berry Bliss Farms → Blueberry Puree, Brown Sugar Syrup, Cream Cheese, Strawberry Puree
+('SUP-0003', 'ING-0005', 'INV-0005'),   -- Blueberry Puree
+('SUP-0003', 'ING-0006', 'INV-0006'),   -- Brown Sugar Syrup
+('SUP-0003', 'ING-0012', 'INV-0012'),   -- Cream Cheese
+('SUP-0003', 'ING-0044', 'INV-0044'),   -- Strawberry Puree
 
-('SUP-0005', 'INV-0024'),
-('SUP-0005', 'INV-0025'),
-('SUP-0005', 'INV-0021'),
-('SUP-0005', 'INV-0007'),
-('SUP-0005', 'INV-0008'),
+-- SUP-0004 Café Essentials PH → Condensed Milk, Creamer, Extra Espresso Shot, Fresh Milk
+('SUP-0004', 'ING-0011', 'INV-0011'),   -- Condensed Milk
+('SUP-0004', 'ING-0013', 'INV-0013'),   -- Creamer
+('SUP-0004', 'ING-0016', 'INV-0016'),   -- Extra Espresso Shot
+('SUP-0004', 'ING-0018', 'INV-0018'),   -- Fresh Milk
 
-('SUP-0006', 'INV-0019'),
-('SUP-0006', 'INV-0020'),
-('SUP-0006', 'INV-0022'),
-('SUP-0006', 'INV-0027'),
-('SUP-0006', 'INV-0026'),
+-- SUP-0005 Eastern Spice Traders → Green Apple Syrup, Hojicha Powder, Honey
+('SUP-0005', 'ING-0021', 'INV-0021'),   -- Green Apple Syrup
+('SUP-0005', 'ING-0024', 'INV-0024'),   -- Hojicha Powder
+('SUP-0005', 'ING-0025', 'INV-0025'),   -- Honey
 
-('SUP-0007', 'INV-0028'),
-('SUP-0007', 'INV-0029'),
-('SUP-0007', 'INV-0030'),
-('SUP-0007', 'INV-0031'),
+-- SUP-0006 Fruity Finds → Fruit Tea Bags, Fruit Tea Concentrate, Ice Cream Base
+('SUP-0006', 'ING-0019', 'INV-0019'),   -- Fruit Tea Bags
+('SUP-0006', 'ING-0020', 'INV-0020'),   -- Fruit Tea Concentrate
+('SUP-0006', 'ING-0027', 'INV-0027'),   -- Ice Cream Base
 
-('SUP-0008', 'INV-0032'),
-('SUP-0008', 'INV-0033'),
-('SUP-0008', 'INV-0034'),
-('SUP-0008', 'INV-0035'),
-('SUP-0008', 'INV-0036'),
+-- SUP-0007 Global Syrup House → Irish Cream Syrup, Kiwi Syrup, Pomegranate Syrup
+('SUP-0007', 'ING-0028', 'INV-0028'),   -- Irish Cream Syrup
+('SUP-0007', 'ING-0029', 'INV-0029'),   -- Kiwi Syrup
+('SUP-0007', 'ING-0041', 'INV-0041'),   -- Pomegranate Syrup
 
-('SUP-0009', 'INV-0037'),
-('SUP-0009', 'INV-0038'),
-('SUP-0009', 'INV-0039'),
-('SUP-0009', 'INV-0040'),
-('SUP-0009', 'INV-0041'),
+-- SUP-0008 Green Leaf Organics → Matcha Powder, Mixed Berry Syrup, Mocha Sauce, Oat Milk
+('SUP-0008', 'ING-0032', 'INV-0032'),   -- Matcha Powder
+('SUP-0008', 'ING-0033', 'INV-0033'),   -- Mixed Berry Syrup
+('SUP-0008', 'ING-0034', 'INV-0034'),   -- Mocha Sauce
+('SUP-0008', 'ING-0035', 'INV-0035'),   -- Oat Milk
 
-('SUP-0010', 'INV-0042'),
-('SUP-0010', 'INV-0043'),
-('SUP-0010', 'INV-0045'),
+-- SUP-0009 Island Flavors Co. → Passion Fruit Syrup, Pecan Syrup, Pistachio Paste, Pomegranate Syrup
+('SUP-0009', 'ING-0037', 'INV-0037'),   -- Passion Fruit Syrup
+('SUP-0009', 'ING-0038', 'INV-0038'),   -- Pecan Syrup
+('SUP-0009', 'ING-0039', 'INV-0039'),   -- Pistachio Paste
+('SUP-0009', 'ING-0041', 'INV-0041'),   -- Pomegranate Syrup
 
-('SUP-0011', 'INV-0044'),
-('SUP-0011', 'INV-0020'),
-('SUP-0011', 'INV-0023'),
+-- SUP-0010 Metro Powder Supplies → Pumpkin Spice Powder, Sakura Syrup, Sugar Syrup
+('SUP-0010', 'ING-0042', 'INV-0042'),   -- Pumpkin Spice Powder
+('SUP-0010', 'ING-0043', 'INV-0043'),   -- Sakura Syrup
+('SUP-0010', 'ING-0045', 'INV-0045'),   -- Sugar Syrup
 
-('SUP-0012', 'INV-0047'),
+-- SUP-0011 Nectar & Bloom → Hazelnut Syrup, Lavender Syrup, Strawberry Puree
+('SUP-0011', 'ING-0023', 'INV-0023'),   -- Hazelnut Syrup
+('SUP-0011', 'ING-0030', 'INV-0030'),   -- Lavender Syrup
+('SUP-0011', 'ING-0044', 'INV-0044'),   -- Strawberry Puree
 
-('SUP-0013', 'INV-0004'),
-('SUP-0013', 'INV-0003'),
+-- SUP-0012 Premium Extract Co. → Pistachio Syrup, Tiramisu Flavoring, Vanilla Syrup
+('SUP-0012', 'ING-0040', 'INV-0040'),   -- Pistachio Syrup
+('SUP-0012', 'ING-0046', 'INV-0046'),   -- Tiramisu Flavoring
+('SUP-0012', 'ING-0047', 'INV-0047'),   -- Vanilla Syrup
 
-('SUP-0014', 'INV-0050'),
-('SUP-0014', 'INV-0009'),
+-- SUP-0013 Sweet Crunch Distributors → Biscoff Crumbs, Biscoff Spread, Oreo Crumbs
+('SUP-0013', 'ING-0003', 'INV-0003'),   -- Biscoff Crumbs
+('SUP-0013', 'ING-0004', 'INV-0004'),   -- Biscoff Spread
+('SUP-0013', 'ING-0036', 'INV-0036'),   -- Oreo Crumbs
 
-('SUP-0015', 'INV-0046'),
-('SUP-0015', 'INV-0007'),
-('SUP-0015', 'INV-0023');
+-- SUP-0014 The Chocolate Source → Cheesecake Base, Dark Chocolate Syrup, White Chocolate Syrup
+('SUP-0014', 'ING-0009', 'INV-0009'),   -- Cheesecake Base
+('SUP-0014', 'ING-0014', 'INV-0014'),   -- Dark Chocolate Syrup
+('SUP-0014', 'ING-0050', 'INV-0050'),   -- White Chocolate Syrup
+
+-- SUP-0015 Vanilla & Friends → Butterscotch Syrup, Hazelnut Syrup, Tiramisu Flavoring
+('SUP-0015', 'ING-0007', 'INV-0007'),   -- Butterscotch Syrup
+('SUP-0015', 'ING-0023', 'INV-0023'),   -- Hazelnut Syrup
+('SUP-0015', 'ING-0046', 'INV-0046');   -- Tiramisu Flavoring
 GO
 
--- ── VERIFY: Confirm supplier count, junction row count, and view output shape ────────────────────
--- Expected: 15
-SELECT COUNT(*) AS supplier_rows FROM dbo.Suppliers WHERE is_deleted = 0 AND [status] = 'active';
+-- ── VERIFY ────────────────────────────────────────────────────────────────────────────────────────
+-- Expected: 15 suppliers
+SELECT COUNT(*) AS supplier_count FROM dbo.Suppliers WHERE is_deleted = 0;
+GO
 
--- Expected: 54
+-- Expected: 44 junction rows
 SELECT COUNT(*) AS junction_rows FROM dbo.Supplier_Ingredients;
+GO
 
--- Confirm the view returns the 5-column shape Java expects
-SELECT supplier_id, supplier_name, ingredients, contact_info, address
-FROM dbo.vw_Suppliers
-WHERE is_deleted = 0 AND [status] = 'active'
-ORDER BY supplier_name ASC;
+-- SPOT CHECK: Show supplier name + ingredient name + inventory_id for first 10 rows
+SELECT TOP 10
+    s.supplier_name,
+    ing.ingredient_name,
+    si.inventory_id
+FROM dbo.Supplier_Ingredients si
+JOIN dbo.Suppliers   s   ON s.supplier_id     = si.supplier_id
+JOIN dbo.Ingredients ing ON ing.ingredient_id = si.ingredient_id
+ORDER BY s.supplier_name, ing.ingredient_name;
 GO

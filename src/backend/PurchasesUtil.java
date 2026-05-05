@@ -19,7 +19,13 @@ import java.util.Set;
  * Contains all business logic and database operations for the Purchases module.
  * The UI layer (purchases_contents) delegates every data/logic call here.
  *
- * Row format throughout: String[] { purchase_id, supplier_id, inventory_id, ingredient, order_date, status }
+ * Row format throughout: String[] { purchase_id, supplier_id, inventory_id, ingredient_name, order_date, status }
+ *
+ * CHANGE LOG:
+ *  - fetchPurchases: fixed i.ingredient → JOIN dbo.Ingredients + ing.ingredient_name
+ *  - fetchItemsForSupplier: fixed i.ingredient → JOIN dbo.Ingredients + ing.ingredient_name
+ *  - updateStatus: when newStatus == "Delivered", also increments dbo.Inventory.quantity
+ *    by the purchase's quantity_ordered for the matching inventory_id.
  */
 public class PurchasesUtil {
 
@@ -58,7 +64,7 @@ public class PurchasesUtil {
      * Fetches all purchases for the given tab ("active" or "archived").
      *
      * @param tab "active" → all non-archived rows; "archived" → status = 'archived'
-     * @return list of rows: [purchase_id, supplier_id, inventory_id, ingredient, order_date, status]
+     * @return list of rows: [purchase_id, supplier_id, inventory_id, ingredient_name, order_date, status]
      */
     public List<String[]> fetchPurchases(String tab) {
         List<String[]> rows = new ArrayList<>();
@@ -66,17 +72,19 @@ public class PurchasesUtil {
 
         String sql = tab.equals("archived")
             ? "SELECT p.purchase_id, p.supplier_id, p.inventory_id, " +
-              "ISNULL(i.ingredient, '—') AS ingredient, " +
+              "ISNULL(ing.ingredient_name, '—') AS ingredient_name, " +
               "CONVERT(VARCHAR(10), p.order_date, 120) AS order_date, p.[status] " +
               "FROM dbo.Purchases p " +
-              "LEFT JOIN dbo.Inventory i ON i.inventory_id = p.inventory_id AND i.is_deleted = 0 " +
+              "LEFT JOIN dbo.Inventory   inv ON inv.inventory_id  = p.inventory_id   AND inv.is_deleted = 0 " +
+              "LEFT JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id AND ing.is_deleted = 0 " +
               "WHERE p.is_deleted = 0 AND p.[status] = 'archived' " +
               "ORDER BY p.order_date DESC, p.purchase_id ASC"
             : "SELECT p.purchase_id, p.supplier_id, p.inventory_id, " +
-              "ISNULL(i.ingredient, '—') AS ingredient, " +
+              "ISNULL(ing.ingredient_name, '—') AS ingredient_name, " +
               "CONVERT(VARCHAR(10), p.order_date, 120) AS order_date, p.[status] " +
               "FROM dbo.Purchases p " +
-              "LEFT JOIN dbo.Inventory i ON i.inventory_id = p.inventory_id AND i.is_deleted = 0 " +
+              "LEFT JOIN dbo.Inventory   inv ON inv.inventory_id  = p.inventory_id   AND inv.is_deleted = 0 " +
+              "LEFT JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id AND ing.is_deleted = 0 " +
               "WHERE p.is_deleted = 0 AND p.[status] <> 'archived' " +
               "ORDER BY p.order_date DESC, p.purchase_id ASC";
 
@@ -85,13 +93,13 @@ public class PurchasesUtil {
             try (ResultSet rs = ps.executeQuery()) {
                 int count = 0;
                 while (rs.next()) {
-                    String purchaseId = nvl(rs.getString(1));
-                    String suppId     = nvl(rs.getString(2));
-                    String invId      = nvl(rs.getString(3));
-                    String ingredient = nvl(rs.getString(4));
-                    String orderDate  = nvl(rs.getString(5));
-                    String status     = nvl(rs.getString(6));
-                    rows.add(new String[]{ purchaseId, suppId, invId, ingredient, orderDate, status });
+                    String purchaseId     = nvl(rs.getString(1));
+                    String suppId         = nvl(rs.getString(2));
+                    String invId          = nvl(rs.getString(3));
+                    String ingredientName = nvl(rs.getString(4));
+                    String orderDate      = nvl(rs.getString(5));
+                    String status         = nvl(rs.getString(6));
+                    rows.add(new String[]{ purchaseId, suppId, invId, ingredientName, orderDate, status });
                     count++;
                 }
                 System.out.println("[PurchasesUtil] fetchPurchases: loaded " + count + " row(s)");
@@ -123,17 +131,19 @@ public class PurchasesUtil {
     }
 
     /**
-     * Returns list of { inventory_id, ingredient, unit } for items linked to the given supplier.
+     * Returns list of { inventory_id, ingredient_name, unit } for items linked to the given supplier.
      * Used to populate the item dropdown after a supplier is selected.
      */
     public List<String[]> fetchItemsForSupplier(String supplierId) {
         List<String[]> items = new ArrayList<>();
         if (!isConnAvailable() || supplierId == null) return items;
+
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT si.inventory_id, i.ingredient, i.unit " +
+                "SELECT si.inventory_id, ing.ingredient_name, inv.unit " +
                 "FROM dbo.Supplier_Ingredients si " +
-                "JOIN dbo.Inventory i ON i.inventory_id = si.inventory_id AND i.is_deleted = 0 " +
-                "WHERE si.supplier_id = ? ORDER BY i.ingredient ASC")) {
+                "JOIN dbo.Inventory   inv ON inv.inventory_id  = si.inventory_id   AND inv.is_deleted = 0 " +
+                "JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id AND ing.is_deleted = 0 " +
+                "WHERE si.supplier_id = ? ORDER BY ing.ingredient_name ASC")) {
             ps.setString(1, supplierId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next())
@@ -150,10 +160,44 @@ public class PurchasesUtil {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Updates only the [status] column for a single purchase row.
+     * Updates the [status] column for a single purchase row.
+     *
+     * DELIVERY LOGIC: When newStatus is "Delivered" and the purchase was NOT
+     * already delivered, this method also increments dbo.Inventory.quantity
+     * by the purchase's quantity_ordered for the matching inventory_id.
+     * This prevents double-counting if the user accidentally sets "Delivered"
+     * twice (the guard checks the current DB status before applying the update).
+     *
+     * @param purchaseId the purchase row to update
+     * @param newStatus  the status value chosen by the user
      */
     public void updateStatus(String purchaseId, String newStatus) {
         if (!isConnAvailable()) return;
+
+        // ── Step 1: read current status, inventory_id, and quantity_ordered ──
+        String currentStatus  = null;
+        String inventoryId    = null;
+        int    quantityOrdered = 0;
+
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT [status], inventory_id, quantity_ordered " +
+                "FROM dbo.Purchases " +
+                "WHERE purchase_id = ? AND is_deleted = 0")) {
+            ps.setString(1, purchaseId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    currentStatus   = rs.getString(1);
+                    inventoryId     = rs.getString(2);
+                    quantityOrdered = rs.getInt(3);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[PurchasesUtil] updateStatus: failed to read current row for " + purchaseId);
+            e.printStackTrace();
+            return;
+        }
+
+        // ── Step 2: update the purchase status ───────────────────────────────
         try (PreparedStatement ps = conn.prepareStatement(
                 "UPDATE dbo.Purchases SET [status] = ? WHERE purchase_id = ? AND is_deleted = 0")) {
             ps.setString(1, newStatus);
@@ -162,6 +206,29 @@ public class PurchasesUtil {
             System.out.println("[PurchasesUtil] updateStatus: " + purchaseId + " → " + newStatus);
         } catch (Exception e) {
             e.printStackTrace();
+            return;
+        }
+
+        // ── Step 3: if status changed TO "Delivered" (and wasn't already), ───
+        //           add quantity_ordered to the matching inventory row's quantity
+        boolean wasAlreadyDelivered = "Delivered".equalsIgnoreCase(currentStatus);
+        boolean isNowDelivered      = "Delivered".equalsIgnoreCase(newStatus);
+
+        if (isNowDelivered && !wasAlreadyDelivered && inventoryId != null && quantityOrdered > 0) {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE dbo.Inventory " +
+                    "SET quantity = quantity + ? " +
+                    "WHERE inventory_id = ? AND is_deleted = 0")) {
+                ps.setInt   (1, quantityOrdered);
+                ps.setString(2, inventoryId);
+                int rows = ps.executeUpdate();
+                System.out.println("[PurchasesUtil] updateStatus: incremented inventory " +
+                    inventoryId + " by " + quantityOrdered +
+                    " (affected " + rows + " row(s))");
+            } catch (Exception e) {
+                System.err.println("[PurchasesUtil] updateStatus: failed to update inventory quantity for " + inventoryId);
+                e.printStackTrace();
+            }
         }
     }
 
@@ -285,9 +352,9 @@ public class PurchasesUtil {
 
     /**
      * Filters a list of purchase rows against a search query.
-     * Matches on: purchase_id, supplier_id, inventory_id, ingredient, and status.
+     * Matches on: purchase_id, supplier_id, inventory_id, ingredient_name, and status.
      *
-     * @param rows        source rows (row format: [purchase_id, supplier_id, inventory_id, ingredient, order_date, status])
+     * @param rows        source rows (row format: [purchase_id, supplier_id, inventory_id, ingredient_name, order_date, status])
      * @param searchQuery the raw query string (blank = no filter)
      * @return filtered list (same row references, not copies)
      */
@@ -299,7 +366,7 @@ public class PurchasesUtil {
             if (row[0].toLowerCase().contains(q) ||   // purchase_id
                 row[1].toLowerCase().contains(q) ||   // supplier_id
                 row[2].toLowerCase().contains(q) ||   // inventory_id
-                row[3].toLowerCase().contains(q) ||   // ingredient
+                row[3].toLowerCase().contains(q) ||   // ingredient_name
                 row[5].toLowerCase().contains(q))     // status
                 filtered.add(row);
         }

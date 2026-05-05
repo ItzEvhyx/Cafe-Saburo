@@ -1,7 +1,6 @@
 package frontend;
 
-import backend.inventory_util;
-import backend.suppliers_util;
+import backend.IngredientsUtil;
 
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -15,35 +14,20 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.stage.Popup;
+import javafx.scene.text.Font;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
+import java.io.File;
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
-/**
- * suppliers_contents
- *
- * Renders the Suppliers table with ONE ROW PER INGREDIENT (1NF compliant).
- *
- * cachedRows: List<String[6]>
- *   [0] supplier_id
- *   [1] supplier_name
- *   [2] ingredient          ← single atomic value
- *   [3] contact_info
- *   [4] address
- *   [5] inventory_id
- */
-public class suppliers_contents {
+public class ingredients_contents {
 
     // ══════════════════════════════════════════════════════
     //  LAYOUT CONSTANTS
@@ -52,38 +36,37 @@ public class suppliers_contents {
     private static final double SIDE_PADDING = 24;
     private static final double HEADER_H     = 56;
 
-    private static final double COL_SUPP_ID    = 0.12;
-    private static final double COL_SUPP_NAME  = 0.22;
-    private static final double COL_INGREDIENT = 0.22;
-    private static final double COL_CONTACT    = 0.20;
-    private static final double COL_ADDRESS    = 0.24;
+    // Column proportions — must sum to 1.0
+    private static final double COL_INGREDIENT_ID   = 0.20;
+    private static final double COL_INGREDIENT_NAME = 0.50;
+    private static final double COL_PRICE           = 0.30;
 
-    private static final double ROW_H        = 40;
+    private static final double ROW_H        = 44;
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
 
+    // ── Modal dimensions ──────────────────────────────────
     private static final double MODAL_W     = 440;
     private static final double MODAL_H     = 260;
-    private static final double ADD_MODAL_W = 520;
-    private static final double ADD_MODAL_H = 520;
+    private static final double ADD_MODAL_W = 480;
+    private static final double ADD_MODAL_H = 420;
 
     // ══════════════════════════════════════════════════════
     //  STYLE CONSTANTS
     // ══════════════════════════════════════════════════════
-    private static final String ACCENT            = "#882F39";
-    private static final String FONT_FAMILY       = "Aleo";
-    private static final String TABLE_BORDER      = "#882F39";
-    private static final String ROW_ALT_BG        = "#FDF5F6";
-    private static final String ROW_WHITE_BG      = "white";
-    private static final String HEADER_BG         = "#F5E8EA";
-    private static final String CONTINUATION_TEXT = "#888888";
+    private static final String ACCENT       = "#882F39";
+    private static final String FONT_FAMILY  = "Aleo";
+    private static final String TABLE_BORDER = "#882F39";
+    private static final String ROW_ALT_BG   = "#FDF5F6";
+    private static final String ROW_WHITE_BG = "white";
+    private static final String HEADER_BG    = "#F5E8EA";
 
     // ══════════════════════════════════════════════════════
     //  STATE
     // ══════════════════════════════════════════════════════
-    private final double     totalW;
-    private final double     totalH;
-    private final Connection conn;
+    private final double          totalW;
+    private final double          totalH;
+    private final IngredientsUtil util;
 
     private String         currentTab  = "active";
     private boolean        editMode    = false;
@@ -97,7 +80,7 @@ public class suppliers_contents {
 
     private Label     editBtn;
     private Label     archiveBtn;
-    private Label     addSupplierBtn;
+    private Label     addIngredientBtn;
     private Label     archiveAllBtn;
     private Label     confirmBtn;
     private Label     activeTabBtn;
@@ -107,6 +90,7 @@ public class suppliers_contents {
     private TextField searchField;
     private HBox      searchBar;
 
+    // ── Layout values ─────────────────────────────────────
     private double btnY;
     private double iconW;
     private double gap;
@@ -122,21 +106,45 @@ public class suppliers_contents {
     private double confirmX;
     private double archAllX;
 
-    public suppliers_contents(double totalW, double totalH, Connection conn) {
+    private static boolean fontsLoaded = false;
+
+    private static void loadFonts() {
+        if (fontsLoaded) return;
+        String[] variants = {
+            "Aleo-Black","Aleo-BlackItalic","Aleo-Bold","Aleo-BoldItalic",
+            "Aleo-ExtraBold","Aleo-ExtraBoldItalic","Aleo-ExtraLight","Aleo-ExtraLightItalic",
+            "Aleo-Italic","Aleo-Light","Aleo-LightItalic","Aleo-Medium","Aleo-MediumItalic",
+            "Aleo-Regular","Aleo-SemiBold","Aleo-SemiBoldItalic","Aleo-Thin","Aleo-ThinItalic"
+        };
+        for (String v : variants) Font.loadFont("file:assets/fonts/" + v + ".ttf", 12);
+        fontsLoaded = true;
+    }
+
+    public ingredients_contents(double totalW, double totalH, Connection conn) {
         this.totalW = totalW;
         this.totalH = totalH;
-        this.conn   = conn;
-        inventory_util.loadFonts();
+        this.util   = new IngredientsUtil(conn);
+        loadFonts();
     }
 
     // ══════════════════════════════════════════════════════
     //  PUBLIC LIVE-UPDATE API
     // ══════════════════════════════════════════════════════
-    public void reloadAndRefresh() {
+    public void prependIngredient(String ingredientId, String ingredientName, String price) {
+        String[] newRow = new String[]{
+            ingredientId   != null ? ingredientId   : "--",
+            ingredientName != null ? ingredientName : "--",
+            price          != null ? price          : "--"
+        };
         if (root != null && currentTab.equals("active")) {
-            cachedRows = suppliers_util.fetchSuppliers(conn, currentTab);
+            cachedRows.add(0, newRow);
             rebuildTable();
         }
+    }
+
+    // ── Filtered rows ─────────────────────────────────────
+    private List<String[]> getFilteredRows() {
+        return util.filterRows(cachedRows, searchQuery);
     }
 
     // ══════════════════════════════════════════════════════
@@ -149,237 +157,13 @@ public class suppliers_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  MULTI-SELECT INGREDIENT DROPDOWN
+    //  ADD INGREDIENT MODAL
     // ══════════════════════════════════════════════════════
-
-    /**
-     * Builds the ingredient multi-select dropdown field.
-     * Returns a VBox containing the label and the trigger HBox.
-     * The trigger's userData holds: String[] { comma-joined selected inv IDs }
-     * The trigger's properties hold:
-     *   "items"       → List<String[]> { [0]=invId, [1]=ingredientName }
-     *   "selectedIds" → Set<String> of currently selected inventory_ids
-     *   "summaryLabel"→ Label showing the selection summary
-     */
-    private VBox buildIngredientDropdownField(FontAwesomeSolid iconCode, String label) {
-        Label fieldLabel = new Label(label);
-        fieldLabel.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 12px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: #555555;"
-        );
-
-        FontIcon fi = new FontIcon(iconCode);
-        fi.setIconSize(13);
-        fi.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-
-        Label summaryLabel = new Label("Select ingredients...");
-        summaryLabel.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 13px;" +
-            "-fx-text-fill: #AAAAAA;"
-        );
-        summaryLabel.setMaxWidth(Double.MAX_VALUE);
-        summaryLabel.setEllipsisString("…");
-        summaryLabel.setWrapText(false);
-        HBox.setHgrow(summaryLabel, Priority.ALWAYS);
-
-        FontIcon arrowIcon = new FontIcon(FontAwesomeSolid.CHEVRON_DOWN);
-        arrowIcon.setIconSize(11);
-        arrowIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-
-        HBox trigger = new HBox(10, fi, summaryLabel, arrowIcon);
-        trigger.setAlignment(Pos.CENTER_LEFT);
-        trigger.setPadding(new Insets(0, 14, 0, 14));
-        trigger.setPrefHeight(40);
-        trigger.setMaxWidth(Double.MAX_VALUE);
-        trigger.setCursor(javafx.scene.Cursor.HAND);
-        trigger.setStyle(dropdownTriggerStyle(false));
-
-        Set<String> selectedInventoryIds = new HashSet<>();
-        trigger.getProperties().put("items",        new ArrayList<String[]>());
-        trigger.getProperties().put("selectedIds",  selectedInventoryIds);
-        trigger.getProperties().put("summaryLabel", summaryLabel);
-        trigger.getProperties().put("open",         false);
-
-        trigger.setOnMouseEntered(e -> {
-            if (!Boolean.TRUE.equals(trigger.getProperties().get("open")))
-                trigger.setStyle(dropdownTriggerStyle(true));
-        });
-        trigger.setOnMouseExited(e -> {
-            if (!Boolean.TRUE.equals(trigger.getProperties().get("open")))
-                trigger.setStyle(dropdownTriggerStyle(false));
-        });
-        trigger.setOnMouseClicked(e -> openIngredientDropdown(trigger));
-
-        VBox wrapper = new VBox(6, fieldLabel, trigger);
-        wrapper.setMaxWidth(Double.MAX_VALUE);
-        HBox.setHgrow(wrapper, Priority.ALWAYS);
-        return wrapper;
-    }
-
-    private String dropdownTriggerStyle(boolean hovered) {
-        return "-fx-background-color: " + (hovered ? "#FDF0F1" : "white") + ";" +
-               "-fx-background-radius: 10;" +
-               "-fx-border-color: " + ACCENT + ";" +
-               "-fx-border-width: 1.5;" +
-               "-fx-border-radius: 10;";
-    }
-
-    /** Populates the dropdown items (inventory list). */
-    @SuppressWarnings("unchecked")
-    private void setIngredientDropdownItems(VBox fieldBox, List<String[]> invItems) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
-        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
-        items.clear();
-        items.addAll(invItems);
-    }
-
-    /** Returns the Set of selected inventory IDs. */
-    @SuppressWarnings("unchecked")
-    private Set<String> getIngredientDropdownSelected(VBox fieldBox) {
-        HBox trigger = (HBox) fieldBox.getChildren().get(1);
-        return (Set<String>) trigger.getProperties().get("selectedIds");
-    }
-
-    /** Opens the multi-select popup for ingredient selection. */
-    @SuppressWarnings("unchecked")
-    private void openIngredientDropdown(HBox trigger) {
-        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
-        if (items == null || items.isEmpty()) return;
-
-        Set<String> selectedInvIds = (Set<String>) trigger.getProperties().get("selectedIds");
-        Label summaryLabel = (Label) trigger.getProperties().get("summaryLabel");
-
-        VBox listBox = new VBox(0);
-        listBox.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-border-color: " + ACCENT + ";" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 10;" +
-            "-fx-background-radius: 10;" +
-            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 12, 0, 0, 4);"
-        );
-
-        ScrollPane sp = new ScrollPane(listBox);
-        sp.setFitToWidth(true);
-        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        sp.setStyle(
-            "-fx-background: transparent;-fx-background-color: transparent;" +
-            "-fx-border-color: transparent;-fx-padding: 0;" +
-            "-fx-background-radius: 10;"
-        );
-        sp.setMaxHeight(220);
-
-        Popup popup = new Popup();
-        popup.setAutoHide(true);
-
-        double trigW = trigger.getWidth() > 0 ? trigger.getWidth() : ADD_MODAL_W - 56;
-        sp.setPrefWidth(trigW);
-        listBox.setPrefWidth(trigW);
-
-        Runnable refreshSummary = () -> {
-            if (selectedInvIds.isEmpty()) {
-                summaryLabel.setText("Select ingredients...");
-                summaryLabel.setStyle(
-                    "-fx-font-family: '" + FONT_FAMILY + "';" +
-                    "-fx-font-size: 13px;" +
-                    "-fx-text-fill: #AAAAAA;"
-                );
-            } else {
-                String names = items.stream()
-                    .filter(it -> selectedInvIds.contains(it[0]))
-                    .map(it -> it[1])
-                    .collect(Collectors.joining(", "));
-                summaryLabel.setText(selectedInvIds.size() + " selected: " + names);
-                summaryLabel.setStyle(
-                    "-fx-font-family: '" + FONT_FAMILY + "';" +
-                    "-fx-font-size: 13px;" +
-                    "-fx-font-weight: bold;" +
-                    "-fx-text-fill: " + ACCENT + ";"
-                );
-            }
-        };
-
-        for (int i = 0; i < items.size(); i++) {
-            String[] inv    = items.get(i);
-            String   invId  = inv[0];
-            String   invName = inv[1];
-            boolean  isSel  = selectedInvIds.contains(invId);
-            boolean  isLast = (i == items.size() - 1);
-
-            CheckBox cb = new CheckBox(invName);
-            cb.setSelected(isSel);
-            cb.setStyle(
-                "-fx-font-family: '" + FONT_FAMILY + "';" +
-                "-fx-font-size: 13px;" +
-                "-fx-text-fill: #333333;" +
-                "-fx-cursor: hand;"
-            );
-
-            HBox row = new HBox(cb);
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(9, 14, 9, 14));
-            row.setMaxWidth(Double.MAX_VALUE);
-            row.setCursor(javafx.scene.Cursor.HAND);
-            String rowRadius = isLast ? "0 0 9 9" : "0";
-            row.setStyle(ingredRowStyle(isSel, false, rowRadius));
-
-            cb.setOnAction(e -> {
-                if (cb.isSelected()) selectedInvIds.add(invId);
-                else                 selectedInvIds.remove(invId);
-                row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius));
-                refreshSummary.run();
-            });
-            row.setOnMouseEntered(e -> row.setStyle(ingredRowStyle(cb.isSelected(), true, rowRadius)));
-            row.setOnMouseExited(e  -> row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius)));
-            // clicking the row toggles the checkbox
-            row.setOnMouseClicked(e -> {
-                if (e.getTarget() != cb) {
-                    cb.setSelected(!cb.isSelected());
-                    if (cb.isSelected()) selectedInvIds.add(invId);
-                    else                 selectedInvIds.remove(invId);
-                    row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius));
-                    refreshSummary.run();
-                }
-            });
-
-            listBox.getChildren().add(row);
-        }
-
-        popup.getContent().add(sp);
-        popup.setOnHidden(e -> {
-            trigger.getProperties().put("open", false);
-            trigger.setStyle(dropdownTriggerStyle(false));
-        });
-
-        javafx.geometry.Bounds bounds = trigger.localToScreen(trigger.getBoundsInLocal());
-        if (bounds != null) {
-            popup.show(trigger, bounds.getMinX(), bounds.getMaxY() + 2);
-        }
-        trigger.getProperties().put("open", true);
-        trigger.setStyle(dropdownTriggerStyle(false));
-    }
-
-    private String ingredRowStyle(boolean selected, boolean hovered, String radius) {
-        String bg = selected && hovered ? "#EDD5D8"
-                  : selected            ? "#F5E8EA"
-                  : hovered             ? "#FDF0F1"
-                  :                       "white";
-        return "-fx-background-color: " + bg + ";" +
-               "-fx-background-radius: " + radius + ";";
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  ADD SUPPLIER MODAL
-    // ══════════════════════════════════════════════════════
-    private void openAddSupplierModal() {
+    private void openAddIngredientModal() {
         Pane overlay = new Pane();
-        overlay.setPrefWidth(totalW); overlay.setPrefHeight(totalH);
-        overlay.setMinWidth(totalW);  overlay.setMinHeight(totalH);
-        overlay.setMaxWidth(totalW);  overlay.setMaxHeight(totalH);
+        overlay.setPrefWidth(totalW);  overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);   overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);   overlay.setMaxHeight(totalH);
         overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
 
         VBox card = new VBox(0);
@@ -402,20 +186,16 @@ public class suppliers_contents {
             "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
             "-fx-border-width: 0 0 1.5 0;"
         );
-        FontIcon truckIcon = new FontIcon(FontAwesomeSolid.TRUCK);
-        truckIcon.setIconSize(17);
-        truckIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
-
-        Label modalTitle = new Label("Add Supplier");
+        FontIcon leafIcon = new FontIcon(FontAwesomeSolid.SEEDLING);
+        leafIcon.setIconSize(17);
+        leafIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+        Label modalTitle = new Label("Add Ingredient");
         modalTitle.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 20px;" +
-            "-fx-font-weight: 800;" +
-            "-fx-text-fill: " + ACCENT + ";"
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 20px;" +
+            "-fx-font-weight: 800;-fx-text-fill: " + ACCENT + ";"
         );
         Region hSpacer = new Region();
         HBox.setHgrow(hSpacer, Priority.ALWAYS);
-
         Label closeBtn = new Label();
         FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
         xIcon.setIconSize(13);
@@ -424,62 +204,41 @@ public class suppliers_contents {
         closeBtn.setCursor(javafx.scene.Cursor.HAND);
         closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
         closeBtn.setAlignment(Pos.CENTER);
-        closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;");
-        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6; -fx-background-radius: 6;"));
-        closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF; -fx-background-radius: 6;"));
+        closeBtn.setStyle("-fx-background-color: #E9ECEF;-fx-background-radius: 6;");
+        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6;-fx-background-radius: 6;"));
+        closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF;-fx-background-radius: 6;"));
         closeBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
-        cardHeader.getChildren().addAll(truckIcon, modalTitle, hSpacer, closeBtn);
+        cardHeader.getChildren().addAll(leafIcon, modalTitle, hSpacer, closeBtn);
 
         // ── Form body ─────────────────────────────────────
-        VBox formBody = new VBox(14);
-        formBody.setPadding(new Insets(20, 28, 8, 28));
+        VBox formBody = new VBox(16);
+        formBody.setPadding(new Insets(22, 28, 10, 28));
         VBox.setVgrow(formBody, Priority.ALWAYS);
 
-        VBox nameField    = buildFormField(FontAwesomeSolid.BUILDING,       "Supplier Name",    "e.g. Fresh Farms Co.");
-        VBox contactField = buildFormField(FontAwesomeSolid.PHONE,          "Contact Info",     "e.g. +63 912 345 6789");
-        VBox addressField = buildFormField(FontAwesomeSolid.MAP_MARKER_ALT, "Physical Address", "e.g. 123 Rizal St., Makati City");
+        // Auto-generated ID row
+        VBox idBox = buildReadOnlyField(FontAwesomeSolid.HASHTAG, "Ingredient ID", "Auto-generated");
 
-        TextField nameInput    = extractTextField(nameField);
-        TextField contactInput = extractTextField(contactField);
-        TextField addressInput = extractTextField(addressField);
+        // Ingredient Name
+        VBox nameBox = buildInputField(FontAwesomeSolid.TAG, "Ingredient Name", "e.g. Espresso Beans", false);
+        TextField nameField = extractTextField(nameBox);
 
-        // ── Ingredient multi-select dropdown ──────────────
-        VBox ingredientDropdown = buildIngredientDropdownField(
-            FontAwesomeSolid.CARROT, "Ingredients (select one or more)");
-
-        // Populate from inventory
-        List<String[]> allInventory;
-        try {
-            allInventory = inventory_util.fetchAllActive(conn);
-            if (allInventory == null) allInventory = new ArrayList<>();
-        } catch (Exception ex) {
-            System.err.println("[suppliers_contents] fetchAllActive threw: " + ex.getMessage());
-            ex.printStackTrace();
-            allInventory = new ArrayList<>();
-        }
-
-        if (!allInventory.isEmpty()) {
-            // fetchAllActive returns String[] where [0]=inventory_id, [1]=ingredient name
-            setIngredientDropdownItems(ingredientDropdown, allInventory);
-        }
-
-        final List<String[]> finalAllInventory = allInventory;
+        // Price
+        VBox priceBox = buildInputField(FontAwesomeSolid.DOLLAR_SIGN, "Price (per unit)", "e.g. 250.00", true);
+        TextField priceField = extractTextField(priceBox);
 
         Label errorLbl = new Label("");
         errorLbl.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 12px;" +
-            "-fx-text-fill: #882F39;"
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;-fx-text-fill: #882F39;"
         );
         errorLbl.setVisible(false);
         errorLbl.setManaged(false);
 
-        formBody.getChildren().addAll(nameField, ingredientDropdown, contactField, addressField, errorLbl);
+        formBody.getChildren().addAll(idBox, nameBox, priceBox, errorLbl);
 
         // ── Footer ────────────────────────────────────────
         HBox footer = new HBox(12);
         footer.setAlignment(Pos.CENTER_RIGHT);
-        footer.setPadding(new Insets(12, 28, 20, 28));
+        footer.setPadding(new Insets(16, 28, 24, 28));
 
         Label cancelBtn = new Label("Cancel");
         cancelBtn.setCursor(javafx.scene.Cursor.HAND);
@@ -493,45 +252,194 @@ public class suppliers_contents {
         FontIcon saveIcon = new FontIcon(FontAwesomeSolid.PLUS_CIRCLE);
         saveIcon.setIconSize(13);
         saveIcon.setIconColor(javafx.scene.paint.Color.WHITE);
-        Label saveBtn = new Label("Add Supplier");
+        Label saveBtn = new Label("Add Ingredient");
         saveBtn.setGraphic(saveIcon);
         saveBtn.setGraphicTextGap(7);
         saveBtn.setCursor(javafx.scene.Cursor.HAND);
-        saveBtn.setPrefWidth(140); saveBtn.setPrefHeight(38);
+        saveBtn.setPrefWidth(160); saveBtn.setPrefHeight(38);
         saveBtn.setAlignment(Pos.CENTER);
         saveBtn.setStyle(addSaveBtnStyle(false));
         saveBtn.setOnMouseEntered(e -> saveBtn.setStyle(addSaveBtnStyle(true)));
         saveBtn.setOnMouseExited(e  -> saveBtn.setStyle(addSaveBtnStyle(false)));
 
         saveBtn.setOnMouseClicked(e -> {
-            String nameVal    = nameInput.getText().trim();
-            String contactVal = contactInput.getText().trim();
-            String addressVal = addressInput.getText().trim();
+            String nameText  = nameField.getText().trim();
+            String priceText = priceField.getText().trim();
 
-            if (nameVal.isEmpty() || contactVal.isEmpty() || addressVal.isEmpty()) {
-                showError(errorLbl, "⚠  Name, contact, and address are required.");
-                return;
+            if (nameText.isEmpty()) {
+                showError(errorLbl, "⚠  Please enter an ingredient name."); return;
             }
-            if (finalAllInventory.isEmpty()) {
-                showError(errorLbl, "⚠  No ingredients available. Add inventory items first.");
-                return;
+            if (priceText.isEmpty()) {
+                showError(errorLbl, "⚠  Please enter a price."); return;
             }
-
-            Set<String> selectedInventoryIds = getIngredientDropdownSelected(ingredientDropdown);
-            if (selectedInventoryIds.isEmpty()) {
-                showError(errorLbl, "⚠  Please select at least one ingredient.");
-                return;
+            double price;
+            try {
+                price = Double.parseDouble(priceText);
+                if (price < 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                showError(errorLbl, "⚠  Price must be a valid non-negative number."); return;
             }
 
-            List<String> invIdList = new ArrayList<>(selectedInventoryIds);
-            String newId = suppliers_util.insertSupplier(conn, nameVal, invIdList, contactVal, addressVal);
+            String newId = util.insertIngredient(nameText, price);
             if (newId == null) {
-                showError(errorLbl, "⚠  Failed to save. Check connection.");
-                return;
+                showError(errorLbl, "⚠  Failed to add ingredient. Check DB connection."); return;
             }
 
             stackRoot.getChildren().remove(overlay);
-            cachedRows = suppliers_util.fetchSuppliers(conn, currentTab);
+            if (currentTab.equals("active")) {
+                prependIngredient(newId, nameText, String.format("%.2f", price));
+            }
+        });
+
+        footer.getChildren().addAll(cancelBtn, saveBtn);
+        card.getChildren().addAll(cardHeader, formBody, footer);
+
+        StackPane centred = new StackPane(card);
+        centred.setPrefWidth(totalW); centred.setPrefHeight(totalH);
+        centred.setMinWidth(totalW);  centred.setMinHeight(totalH);
+        centred.setMaxWidth(totalW);  centred.setMaxHeight(totalH);
+        centred.setAlignment(Pos.CENTER);
+        overlay.getChildren().add(centred);
+        stackRoot.getChildren().add(overlay);
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  EDIT INGREDIENT MODAL
+    // ══════════════════════════════════════════════════════
+    private void openEditIngredientModal(String ingredientId, String currentName, String currentPrice) {
+        Pane overlay = new Pane();
+        overlay.setPrefWidth(totalW);  overlay.setPrefHeight(totalH);
+        overlay.setMinWidth(totalW);   overlay.setMinHeight(totalH);
+        overlay.setMaxWidth(totalW);   overlay.setMaxHeight(totalH);
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.45);");
+
+        VBox card = new VBox(0);
+        card.setAlignment(Pos.TOP_LEFT);
+        card.setMinWidth(ADD_MODAL_W);  card.setMaxWidth(ADD_MODAL_W);  card.setPrefWidth(ADD_MODAL_W);
+        card.setMinHeight(ADD_MODAL_H); card.setMaxHeight(ADD_MODAL_H); card.setPrefHeight(ADD_MODAL_H);
+        card.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-background-radius: 14;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.22), 24, 0, 0, 6);"
+        );
+
+        // ── Header ────────────────────────────────────────
+        HBox cardHeader = new HBox(10);
+        cardHeader.setPadding(new Insets(20, 24, 16, 24));
+        cardHeader.setAlignment(Pos.CENTER_LEFT);
+        cardHeader.setStyle(
+            "-fx-background-color: " + HEADER_BG + ";" +
+            "-fx-background-radius: 14 14 0 0;" +
+            "-fx-border-color: transparent transparent " + TABLE_BORDER + " transparent;" +
+            "-fx-border-width: 0 0 1.5 0;"
+        );
+        FontIcon penIcon2 = new FontIcon(FontAwesomeSolid.PEN);
+        penIcon2.setIconSize(17);
+        penIcon2.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+        Label modalTitle = new Label("Edit Ingredient");
+        modalTitle.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 20px;" +
+            "-fx-font-weight: 800;-fx-text-fill: " + ACCENT + ";"
+        );
+        Region hSpacer = new Region();
+        HBox.setHgrow(hSpacer, Priority.ALWAYS);
+        Label closeBtn = new Label();
+        FontIcon xIcon = new FontIcon(FontAwesomeSolid.TIMES);
+        xIcon.setIconSize(13);
+        xIcon.setIconColor(javafx.scene.paint.Color.web("#555555"));
+        closeBtn.setGraphic(xIcon);
+        closeBtn.setCursor(javafx.scene.Cursor.HAND);
+        closeBtn.setPrefWidth(30); closeBtn.setPrefHeight(30);
+        closeBtn.setAlignment(Pos.CENTER);
+        closeBtn.setStyle("-fx-background-color: #E9ECEF;-fx-background-radius: 6;");
+        closeBtn.setOnMouseEntered(e -> closeBtn.setStyle("-fx-background-color: #DEE2E6;-fx-background-radius: 6;"));
+        closeBtn.setOnMouseExited(e  -> closeBtn.setStyle("-fx-background-color: #E9ECEF;-fx-background-radius: 6;"));
+        closeBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
+        cardHeader.getChildren().addAll(penIcon2, modalTitle, hSpacer, closeBtn);
+
+        // ── Form body ─────────────────────────────────────
+        VBox formBody = new VBox(16);
+        formBody.setPadding(new Insets(22, 28, 10, 28));
+        VBox.setVgrow(formBody, Priority.ALWAYS);
+
+        VBox idBox = buildReadOnlyField(FontAwesomeSolid.HASHTAG, "Ingredient ID", ingredientId);
+
+        VBox nameBox = buildInputField(FontAwesomeSolid.TAG, "Ingredient Name", "e.g. Espresso Beans", false);
+        TextField nameField = extractTextField(nameBox);
+        nameField.setText(currentName);
+
+        VBox priceBox = buildInputField(FontAwesomeSolid.DOLLAR_SIGN, "Price (per unit)", "e.g. 250.00", true);
+        TextField priceField = extractTextField(priceBox);
+        priceField.setText(currentPrice);
+
+        Label errorLbl = new Label("");
+        errorLbl.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;-fx-text-fill: #882F39;"
+        );
+        errorLbl.setVisible(false);
+        errorLbl.setManaged(false);
+
+        formBody.getChildren().addAll(idBox, nameBox, priceBox, errorLbl);
+
+        // ── Footer ────────────────────────────────────────
+        HBox footer = new HBox(12);
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.setPadding(new Insets(16, 28, 24, 28));
+
+        Label cancelBtn = new Label("Cancel");
+        cancelBtn.setCursor(javafx.scene.Cursor.HAND);
+        cancelBtn.setPrefWidth(120); cancelBtn.setPrefHeight(38);
+        cancelBtn.setAlignment(Pos.CENTER);
+        cancelBtn.setStyle(modalNoBtnStyle(false));
+        cancelBtn.setOnMouseEntered(e -> cancelBtn.setStyle(modalNoBtnStyle(true)));
+        cancelBtn.setOnMouseExited(e  -> cancelBtn.setStyle(modalNoBtnStyle(false)));
+        cancelBtn.setOnMouseClicked(e -> stackRoot.getChildren().remove(overlay));
+
+        FontIcon saveIcon = new FontIcon(FontAwesomeSolid.SAVE);
+        saveIcon.setIconSize(13);
+        saveIcon.setIconColor(javafx.scene.paint.Color.WHITE);
+        Label saveBtn = new Label("Save Changes");
+        saveBtn.setGraphic(saveIcon);
+        saveBtn.setGraphicTextGap(7);
+        saveBtn.setCursor(javafx.scene.Cursor.HAND);
+        saveBtn.setPrefWidth(150); saveBtn.setPrefHeight(38);
+        saveBtn.setAlignment(Pos.CENTER);
+        saveBtn.setStyle(addSaveBtnStyle(false));
+        saveBtn.setOnMouseEntered(e -> saveBtn.setStyle(addSaveBtnStyle(true)));
+        saveBtn.setOnMouseExited(e  -> saveBtn.setStyle(addSaveBtnStyle(false)));
+
+        saveBtn.setOnMouseClicked(e -> {
+            String nameText  = nameField.getText().trim();
+            String priceText = priceField.getText().trim();
+
+            if (nameText.isEmpty()) {
+                showError(errorLbl, "⚠  Please enter an ingredient name."); return;
+            }
+            if (priceText.isEmpty()) {
+                showError(errorLbl, "⚠  Please enter a price."); return;
+            }
+            double price;
+            try {
+                price = Double.parseDouble(priceText);
+                if (price < 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                showError(errorLbl, "⚠  Price must be a valid non-negative number."); return;
+            }
+
+            boolean ok = util.updateIngredient(ingredientId, nameText, price);
+            if (!ok) {
+                showError(errorLbl, "⚠  Failed to save changes. Check DB connection."); return;
+            }
+
+            // Update cached row in-place
+            for (String[] r : cachedRows) {
+                if (r[0].equals(ingredientId)) {
+                    r[1] = nameText;
+                    r[2] = String.format("%.2f", price);
+                    break;
+                }
+            }
+            stackRoot.getChildren().remove(overlay);
             rebuildTable();
         });
 
@@ -553,46 +461,73 @@ public class suppliers_contents {
         lbl.setManaged(true);
     }
 
-    // ── Form field factory ────────────────────────────────
-    private VBox buildFormField(FontAwesomeSolid iconCode, String label, String prompt) {
-        Label fieldLabel = new Label(label);
-        fieldLabel.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 12px;" +
-            "-fx-font-weight: bold;" +
-            "-fx-text-fill: #555555;"
+    // ══════════════════════════════════════════════════════
+    //  FORM FIELD BUILDERS
+    // ══════════════════════════════════════════════════════
+    private VBox buildReadOnlyField(FontAwesomeSolid iconCode, String label, String value) {
+        Label fieldLabel = buildFieldLabel(label);
+        FontIcon fi = new FontIcon(iconCode);
+        fi.setIconSize(13);
+        fi.setIconColor(javafx.scene.paint.Color.web("#AAAAAA"));
+        Label valueLbl = new Label(value);
+        HBox.setHgrow(valueLbl, Priority.ALWAYS);
+        valueLbl.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-text-fill: #AAAAAA;-fx-font-style: italic;"
         );
+        HBox box = new HBox(8, fi, valueLbl);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(0, 12, 0, 12));
+        box.setPrefHeight(40);
+        box.setStyle(
+            "-fx-background-color: #F8F9FA;-fx-background-radius: 10;" +
+            "-fx-border-color: #DDDDDD;-fx-border-width: 1.5;-fx-border-radius: 10;"
+        );
+        return new VBox(6, fieldLabel, box);
+    }
+
+    private VBox buildInputField(FontAwesomeSolid iconCode, String label,
+                                  String promptText, boolean decimalOnly) {
+        Label fieldLabel = buildFieldLabel(label);
         FontIcon fi = new FontIcon(iconCode);
         fi.setIconSize(13);
         fi.setIconColor(javafx.scene.paint.Color.web(ACCENT));
         TextField input = new TextField();
-        input.setPromptText(prompt);
+        input.setPromptText(promptText);
         HBox.setHgrow(input, Priority.ALWAYS);
         input.setStyle(
-            "-fx-background-color: transparent;" +
-            "-fx-border-color: transparent;" +
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 13px;" +
-            "-fx-text-fill: #333333;" +
-            "-fx-prompt-text-fill: #AAAAAA;"
+            "-fx-background-color: transparent;-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;-fx-prompt-text-fill: #AAAAAA;"
         );
-        HBox inputBox = new HBox(8, fi, input);
-        inputBox.setAlignment(Pos.CENTER_LEFT);
-        inputBox.setPadding(new Insets(0, 12, 0, 12));
-        inputBox.setPrefHeight(40);
-        inputBox.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 10;" +
-            "-fx-border-color: " + ACCENT + ";" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 10;"
+        if (decimalOnly) {
+            input.textProperty().addListener((obs, o, n) -> {
+                if (!n.matches("\\d*\\.?\\d*")) input.setText(n.replaceAll("[^\\d.]", ""));
+            });
+        }
+        HBox box = new HBox(8, fi, input);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.setPadding(new Insets(0, 12, 0, 12));
+        box.setPrefHeight(40);
+        box.setStyle(
+            "-fx-background-color: white;-fx-background-radius: 10;" +
+            "-fx-border-color: " + ACCENT + ";-fx-border-width: 1.5;-fx-border-radius: 10;"
         );
-        return new VBox(6, fieldLabel, inputBox);
+        return new VBox(6, fieldLabel, box);
+    }
+
+    private Label buildFieldLabel(String text) {
+        Label lbl = new Label(text);
+        lbl.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 12px;" +
+            "-fx-font-weight: bold;-fx-text-fill: #555555;"
+        );
+        return lbl;
     }
 
     private TextField extractTextField(VBox fieldBox) {
-        HBox inputBox = (HBox) fieldBox.getChildren().get(1);
-        return (TextField) inputBox.getChildren().get(1);
+        HBox box = (HBox) fieldBox.getChildren().get(1);
+        return (TextField) box.getChildren().get(1);
     }
 
     // ══════════════════════════════════════════════════════
@@ -608,7 +543,7 @@ public class suppliers_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH = 36;
+        double btnH  = 36;
         btnY     = TOP_PADDING + 10;
         iconW    = 36;
         gap      = 8;
@@ -616,30 +551,28 @@ public class suppliers_contents {
         archAllW = 100;
         confirmW = 90;
         csvW     = 120;
-        double addW = 130;
+        double addW  = 160;
         searchW  = 200;
 
-        Label title = new Label("Suppliers");
+        Label title = new Label("Ingredients");
         title.setStyle(
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 36px;" +
-            "-fx-font-weight: 800;" +
-            "-fx-text-fill: " + ACCENT + ";"
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 36px;" +
+            "-fx-font-weight: 800;-fx-text-fill: " + ACCENT + ";"
         );
 
-        FontIcon plusIcon = new FontIcon(FontAwesomeSolid.PLUS_CIRCLE);
-        plusIcon.setIconSize(14);
-        plusIcon.setIconColor(javafx.scene.paint.Color.web("#155724"));
-        addSupplierBtn = new Label("Add Supplier");
-        addSupplierBtn.setGraphic(plusIcon);
-        addSupplierBtn.setGraphicTextGap(6);
-        addSupplierBtn.setCursor(javafx.scene.Cursor.HAND);
-        addSupplierBtn.setStyle(addSupplierBtnStyle(false));
-        addSupplierBtn.setPrefHeight(btnH); addSupplierBtn.setPrefWidth(addW);
-        addSupplierBtn.setAlignment(Pos.CENTER);
-        addSupplierBtn.setOnMouseEntered(e -> addSupplierBtn.setStyle(addSupplierBtnStyle(true)));
-        addSupplierBtn.setOnMouseExited(e  -> addSupplierBtn.setStyle(addSupplierBtnStyle(false)));
-        addSupplierBtn.setOnMouseClicked(e -> openAddSupplierModal());
+        FontIcon addIcon = new FontIcon(FontAwesomeSolid.PLUS_CIRCLE);
+        addIcon.setIconSize(14);
+        addIcon.setIconColor(javafx.scene.paint.Color.web("#155724"));
+        addIngredientBtn = new Label("Add Ingredient");
+        addIngredientBtn.setGraphic(addIcon);
+        addIngredientBtn.setGraphicTextGap(6);
+        addIngredientBtn.setCursor(javafx.scene.Cursor.HAND);
+        addIngredientBtn.setStyle(addIngredientBtnStyle(false));
+        addIngredientBtn.setPrefHeight(btnH); addIngredientBtn.setPrefWidth(addW);
+        addIngredientBtn.setAlignment(Pos.CENTER);
+        addIngredientBtn.setOnMouseEntered(e -> addIngredientBtn.setStyle(addIngredientBtnStyle(true)));
+        addIngredientBtn.setOnMouseExited(e  -> addIngredientBtn.setStyle(addIngredientBtnStyle(false)));
+        addIngredientBtn.setOnMouseClicked(e -> openAddIngredientModal());
 
         FontIcon penIcon = new FontIcon(FontAwesomeSolid.PEN);
         penIcon.setIconSize(15);
@@ -677,7 +610,7 @@ public class suppliers_contents {
         archiveBtn.setOnMouseExited(e  -> archiveBtn.setStyle(archiveBtnStyle(archiveMode)));
         archiveBtn.setOnMouseClicked(e -> toggleArchiveMode());
 
-        HBox titleRow = new HBox(gap, title, addSupplierBtn, editBtn, archiveBtn);
+        HBox titleRow = new HBox(gap, title, addIngredientBtn, editBtn, archiveBtn);
         titleRow.setAlignment(Pos.CENTER_LEFT);
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
@@ -705,10 +638,10 @@ public class suppliers_contents {
         deleteBtn.setOnMouseExited(e  -> deleteBtn.setStyle(deleteBtnStyle(false)));
         deleteBtn.setOnMouseClicked(e ->
             stackRoot.getChildren().add(buildConfirmModal(
-                "Suppliers (" + currentTab + ")",
-                "This will permanently remove all suppliers in this view.\nThis action cannot be undone.",
+                "Ingredients (" + currentTab + ")",
+                "This will permanently remove all ingredients in this view.\nThis action cannot be undone.",
                 () -> {
-                    suppliers_util.hardDeleteAll(conn, currentTab);
+                    util.hardDeleteAll(currentTab);
                     cachedRows.clear();
                     selectedIds.clear();
                     rebuildTable();
@@ -729,11 +662,7 @@ public class suppliers_contents {
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
-        exportCsvBtn.setOnMouseClicked(e -> {
-            Stage stage = null;
-            try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
-            suppliers_util.exportCsv(conn, currentTab, stage);
-        });
+        exportCsvBtn.setOnMouseClicked(e -> exportCsv());
 
         activeTabBtn = buildTabLabel("Active", true);
         activeTabBtn.setLayoutX(activeTabX); activeTabBtn.setLayoutY(btnY);
@@ -781,14 +710,14 @@ public class suppliers_contents {
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
-            if (currentTab.equals("active")) suppliers_util.archiveSelected(conn, selectedIds);
-            else                             suppliers_util.restoreSelected(conn, selectedIds);
+            if (currentTab.equals("active")) util.archiveSelected(selectedIds);
+            else                             util.restoreSelected(selectedIds);
             selectedIds.clear(); archiveMode = false;
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
             repositionSearchBar();
-            cachedRows = suppliers_util.fetchSuppliers(conn, currentTab);
+            cachedRows = util.fetchIngredients(currentTab);
             rebuildTable();
         });
 
@@ -797,14 +726,11 @@ public class suppliers_contents {
         searchIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
 
         searchField = new TextField();
-        searchField.setPromptText("Search supplier or ingredient...");
+        searchField.setPromptText("Search ingredient or ID...");
         searchField.setStyle(
-            "-fx-background-color: transparent;" +
-            "-fx-border-color: transparent;" +
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 13px;" +
-            "-fx-text-fill: #333333;" +
-            "-fx-prompt-text-fill: #AAAAAA;"
+            "-fx-background-color: transparent;-fx-border-color: transparent;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
+            "-fx-text-fill: #333333;-fx-prompt-text-fill: #AAAAAA;"
         );
         searchField.setPrefWidth(searchW - 42);
 
@@ -814,11 +740,8 @@ public class suppliers_contents {
         searchBar.setPrefWidth(searchW); searchBar.setPrefHeight(btnH);
         searchBar.setLayoutX(initialSearchX); searchBar.setLayoutY(btnY);
         searchBar.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 20;" +
-            "-fx-border-color: " + ACCENT + ";" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 20;"
+            "-fx-background-color: white;-fx-background-radius: 20;" +
+            "-fx-border-color: " + ACCENT + ";-fx-border-width: 1.5;-fx-border-radius: 20;"
         );
 
         searchField.textProperty().addListener((obs, oldVal, newVal) -> {
@@ -830,7 +753,7 @@ public class suppliers_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        cachedRows  = suppliers_util.fetchSuppliers(conn, "active");
+        cachedRows  = util.fetchIngredients("active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
@@ -839,6 +762,19 @@ public class suppliers_contents {
         );
         stackRoot.getChildren().add(root);
         return stackRoot;
+    }
+
+    // ── CSV export ─────────────────────────────────────────
+    private void exportCsv() {
+        if (cachedRows.isEmpty()) return;
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Save Ingredients as CSV");
+        chooser.setInitialFileName("ingredients_" + currentTab + ".csv");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+        Stage stage = null;
+        try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
+        File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
+        util.exportToCsv(file, cachedRows, currentTab);
     }
 
     // ══════════════════════════════════════════════════════
@@ -887,7 +823,7 @@ public class suppliers_contents {
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
         repositionSearchBar();
-        cachedRows = suppliers_util.fetchSuppliers(conn, tab);
+        cachedRows = util.fetchIngredients(tab);
         rebuildTable();
     }
 
@@ -980,8 +916,7 @@ public class suppliers_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        List<String[]> filtered = suppliers_util.getFilteredRows(cachedRows, searchQuery);
-        VBox tableBox = buildTable(tableW, filtered);
+        VBox tableBox = buildTable(tableW, getFilteredRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -1007,11 +942,10 @@ public class suppliers_contents {
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);"
         );
         table.getChildren().add(buildHeaderRow(tableW, dataW));
-
         if (rows.isEmpty()) {
-            String msg = (searchQuery != null && !searchQuery.isBlank())
+            String msg = !searchQuery.isBlank()
                 ? "No results found for \"" + searchQuery + "\"."
-                : currentTab.equals("archived") ? "No archived suppliers." : "No suppliers found.";
+                : currentTab.equals("archived") ? "No archived ingredients." : "No ingredients found.";
             Label empty = new Label(msg);
             empty.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 14px;" +
@@ -1019,22 +953,13 @@ public class suppliers_contents {
             );
             table.getChildren().add(empty);
         } else {
-            String prevSuppId = null;
-            boolean isAlt = false;
-
             for (int i = 0; i < rows.size(); i++) {
-                String[] item   = rows.get(i);
-                String  suppId  = item[0];
-                boolean isLast  = (i == rows.size() - 1);
-
-                boolean isFirstInGroup = !suppId.equals(prevSuppId);
-                if (isFirstInGroup) {
-                    if (prevSuppId != null) isAlt = !isAlt;
-                    prevSuppId = suppId;
-                }
-
-                String bg = isAlt ? ROW_ALT_BG : ROW_WHITE_BG;
-                table.getChildren().add(buildDataRow(item, isFirstInGroup, bg, tableW, dataW, isLast));
+                String[] item = rows.get(i);
+                table.getChildren().add(buildDataRow(
+                    item[0], item[1], item[2],
+                    i % 2 == 0 ? ROW_WHITE_BG : ROW_ALT_BG,
+                    tableW, dataW, i == rows.size() - 1
+                ));
             }
         }
         return table;
@@ -1050,11 +975,9 @@ public class suppliers_contents {
         );
         row.setAlignment(Pos.CENTER_LEFT);
         row.getChildren().addAll(
-            buildHeaderCell("Supplier ID",   dataW * COL_SUPP_ID),    buildColDivider(),
-            buildHeaderCell("Supplier Name", dataW * COL_SUPP_NAME),  buildColDivider(),
-            buildHeaderCell("Ingredient",    dataW * COL_INGREDIENT), buildColDivider(),
-            buildHeaderCell("Contact Info",  dataW * COL_CONTACT),    buildColDivider(),
-            buildHeaderCell("Address",       dataW * COL_ADDRESS)
+            buildHeaderCell("Ingredient ID",   dataW * COL_INGREDIENT_ID),   buildColDivider(),
+            buildHeaderCell("Ingredient", dataW * COL_INGREDIENT_NAME), buildColDivider(),
+            buildHeaderCell("Price",           dataW * COL_PRICE)
         );
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
@@ -1077,148 +1000,57 @@ public class suppliers_contents {
         return lbl;
     }
 
-    private HBox buildDataRow(String[] item,
-                               boolean isFirstInGroup,
-                               String bg,
-                               double tableW,
-                               double dataW,
-                               boolean isLast) {
-        String supplierId   = item[0];
-        String supplierName = item[1];
-        String ingredient   = item[2];
-        String contactInfo  = item[3];
-        String address      = item[4];
-
+    private HBox buildDataRow(String ingredientId, String ingredientName, String price,
+                               String bg, double tableW, double dataW, boolean isLast) {
         HBox row = new HBox(0);
         row.setAlignment(Pos.TOP_LEFT);
         String  bottomRadius = isLast ? "0 0 10 10" : "0";
         String  borderBottom = isLast ? "0" : "1";
-        boolean selected     = selectedIds.contains(supplierId);
+        boolean selected     = selectedIds.contains(ingredientId);
         row.setStyle(rowStyle(selected ? "#FDE8EA" : bg, bottomRadius, borderBottom));
+
         row.setOnMouseEntered(e -> {
-            if (!selectedIds.contains(supplierId))
+            if (!selectedIds.contains(ingredientId))
                 row.setStyle(rowStyle("#F5E8EA", bottomRadius, borderBottom));
         });
         row.setOnMouseExited(e ->
-            row.setStyle(rowStyle(selectedIds.contains(supplierId) ? "#FDE8EA" : bg, bottomRadius, borderBottom))
+            row.setStyle(rowStyle(selectedIds.contains(ingredientId) ? "#FDE8EA" : bg, bottomRadius, borderBottom))
         );
 
-        javafx.scene.Node idCell = buildTextCell(
-            isFirstInGroup ? supplierId : "", dataW * COL_SUPP_ID, true, false);
-
-        javafx.scene.Node nameCell;
-        if (editMode && currentTab.equals("active") && isFirstInGroup) {
-            nameCell = buildEditableTextCell(item, 1, dataW * COL_SUPP_NAME);
-        } else {
-            nameCell = buildTextCell(isFirstInGroup ? supplierName : "", dataW * COL_SUPP_NAME, false, false);
-        }
-
-        javafx.scene.Node ingredCell = buildTextCell(ingredient, dataW * COL_INGREDIENT, false, false);
-
-        javafx.scene.Node contactCell;
-        if (editMode && currentTab.equals("active") && isFirstInGroup) {
-            contactCell = buildEditableTextCell(item, 3, dataW * COL_CONTACT);
-        } else {
-            contactCell = buildTextCell(isFirstInGroup ? contactInfo : "", dataW * COL_CONTACT, false, false);
-        }
-
-        javafx.scene.Node addressCell;
-        if (editMode && currentTab.equals("active") && isFirstInGroup) {
-            addressCell = buildEditableTextCell(item, 4, dataW * COL_ADDRESS);
-        } else {
-            addressCell = buildTextCell(
-                isFirstInGroup ? address : "",
-                dataW * COL_ADDRESS, false, !isFirstInGroup);
+        // Click row to open edit modal when in edit mode
+        if (editMode && currentTab.equals("active")) {
+            row.setCursor(javafx.scene.Cursor.HAND);
+            row.setOnMouseClicked(e -> openEditIngredientModal(ingredientId, ingredientName, price));
         }
 
         row.getChildren().addAll(
-            idCell,      buildColDivider(),
-            nameCell,    buildColDivider(),
-            ingredCell,  buildColDivider(),
-            contactCell, buildColDivider(),
-            addressCell
+            buildTextCell(ingredientId,   dataW * COL_INGREDIENT_ID,   true),  buildColDivider(),
+            buildTextCell(ingredientName, dataW * COL_INGREDIENT_NAME, false),  buildColDivider(),
+            buildTextCell(price != null && !price.equals("--") ? "₱ " + price : "--",
+                          dataW * COL_PRICE, false)
         );
 
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
-            if (isFirstInGroup) {
-                CheckBox cb = new CheckBox();
-                cb.setSelected(selected); cb.setStyle("-fx-cursor: hand;");
-                cb.setOnAction(e -> {
-                    if (cb.isSelected()) {
-                        selectedIds.add(supplierId);
-                        row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom));
-                    } else {
-                        selectedIds.remove(supplierId);
-                        row.setStyle(rowStyle(bg, bottomRadius, borderBottom));
-                    }
-                    rebuildTable();
-                });
-                HBox cbCell = new HBox(cb);
-                cbCell.setPrefWidth(CHECKBOX_COL); cbCell.setMinHeight(ROW_H);
-                cbCell.setPadding(new Insets(10, 0, 10, 0));
-                cbCell.setAlignment(Pos.TOP_CENTER);
-                row.getChildren().add(cbCell);
-            } else {
-                Region spacer = new Region();
-                spacer.setPrefWidth(CHECKBOX_COL); spacer.setMinHeight(ROW_H);
-                row.getChildren().add(spacer);
-            }
+            CheckBox cb = new CheckBox();
+            cb.setSelected(selected); cb.setStyle("-fx-cursor: hand;");
+            cb.setOnAction(e -> {
+                if (cb.isSelected()) {
+                    selectedIds.add(ingredientId);
+                    row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom));
+                } else {
+                    selectedIds.remove(ingredientId);
+                    row.setStyle(rowStyle(bg, bottomRadius, borderBottom));
+                }
+            });
+            HBox cbCell = new HBox(cb);
+            cbCell.setPrefWidth(CHECKBOX_COL);
+            cbCell.setMinHeight(ROW_H);
+            cbCell.setPadding(new Insets(12, 0, 12, 0));
+            cbCell.setAlignment(Pos.TOP_CENTER);
+            row.getChildren().add(cbCell);
         }
         return row;
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  EDITABLE TEXT CELL
-    // ══════════════════════════════════════════════════════
-    private HBox buildEditableTextCell(String[] item, int colIndex, double width) {
-        String supplierId = item[0];
-        String initialValue;
-        switch (colIndex) {
-            case 1:  initialValue = item[1]; break;
-            case 3:  initialValue = item[3]; break;
-            default: initialValue = item[4]; break;
-        }
-
-        TextField field = new TextField(initialValue);
-        field.setPrefWidth(width - 24);
-        field.setPrefHeight(ROW_H - 12);
-        field.setStyle(
-            "-fx-background-color: white;" +
-            "-fx-background-radius: 6;" +
-            "-fx-border-color: " + ACCENT + ";" +
-            "-fx-border-width: 1.5;" +
-            "-fx-border-radius: 6;" +
-            "-fx-font-family: '" + FONT_FAMILY + "';" +
-            "-fx-font-size: 13px;" +
-            "-fx-text-fill: #222222;" +
-            "-fx-padding: 4 8 4 8;"
-        );
-
-        Runnable save = () -> {
-            String newVal = field.getText().trim();
-            if (newVal.isEmpty()) return;
-            for (String[] r : cachedRows) {
-                if (r[0].equals(supplierId)) r[colIndex] = newVal;
-            }
-            String[] first = cachedRows.stream()
-                .filter(r -> r[0].equals(supplierId))
-                .findFirst().orElse(null);
-            if (first != null) {
-                suppliers_util.updateSupplier(conn, supplierId, first[1], first[3], first[4]);
-            }
-        };
-
-        field.setOnAction(e -> save.run());
-        field.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
-            if (!isNowFocused) save.run();
-        });
-
-        HBox cell = new HBox(field);
-        cell.setPrefWidth(width); cell.setMinHeight(ROW_H);
-        cell.setPadding(new Insets(6, 6, 6, 10));
-        cell.setAlignment(Pos.TOP_LEFT);
-        return cell;
     }
 
     // ══════════════════════════════════════════════════════
@@ -1230,20 +1062,20 @@ public class suppliers_contents {
                "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
-    private HBox buildTextCell(String text, double width, boolean bold, boolean muted) {
-        Label lbl = new Label(text != null ? text : "");
-        lbl.setPrefWidth(width - 16); lbl.setMaxWidth(width - 16);
+    private HBox buildTextCell(String text, double width, boolean bold) {
+        Label lbl = new Label(text != null ? text : "—");
+        lbl.setPrefWidth(width - 16);
+        lbl.setMaxWidth(width - 16);
         lbl.setWrapText(true);
         lbl.setPadding(new Insets(10, 8, 10, 0));
         lbl.setAlignment(Pos.TOP_LEFT);
-        String colour = muted ? CONTINUATION_TEXT : "#333333";
         lbl.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
-            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";" +
-            "-fx-text-fill: " + colour + ";"
+            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";-fx-text-fill: #333333;"
         );
         HBox cell = new HBox(lbl);
-        cell.setPrefWidth(width); cell.setMinHeight(ROW_H);
+        cell.setPrefWidth(width);
+        cell.setMinHeight(ROW_H);
         cell.setPadding(new Insets(0, 0, 0, 16));
         cell.setAlignment(Pos.TOP_LEFT);
         return cell;
@@ -1252,7 +1084,7 @@ public class suppliers_contents {
     private Region buildColDivider() {
         Region div = new Region();
         div.setPrefWidth(1.5); div.setMinWidth(1.5); div.setMaxWidth(1.5);
-        div.setStyle("-fx-background-color: " + TABLE_BORDER + "; -fx-opacity: 0.35;");
+        div.setStyle("-fx-background-color: " + TABLE_BORDER + ";-fx-opacity: 0.35;");
         VBox.setVgrow(div, Priority.ALWAYS);
         return div;
     }
@@ -1313,7 +1145,7 @@ public class suppliers_contents {
                "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +
                "-fx-text-fill: #155724;-fx-cursor: hand;";
     }
-    private String addSupplierBtnStyle(boolean hovered) {
+    private String addIngredientBtnStyle(boolean hovered) {
         return "-fx-background-color: " + (hovered ? "#C3E6CB" : "#D4EDDA") + ";-fx-background-radius: 8;" +
                "-fx-border-color: #155724;-fx-border-radius: 8;-fx-border-width: 1.5;" +
                "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;-fx-font-weight: bold;" +

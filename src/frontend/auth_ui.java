@@ -8,6 +8,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.KeyCode;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
@@ -317,9 +318,10 @@ public class auth_ui {
             "-fx-border-radius: 20;"
         );
 
-        Label modalIcon = new Label("✔");
-        modalIcon.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 52));
-        modalIcon.setTextFill(Color.web("#2ecc40"));
+        // ── FIX: Use Ikonli FontIcon instead of a Label with a unicode char ──
+        FontIcon checkIcon = new FontIcon(FontAwesomeSolid.CHECK_CIRCLE);
+        checkIcon.setIconSize(52);
+        checkIcon.setIconColor(Color.web("#2ecc40"));
 
         Label modalMsg = new Label();
         modalMsg.setFont(Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf", 20));
@@ -332,6 +334,8 @@ public class auth_ui {
         modalOkBtn.setPrefWidth(200);
         modalOkBtn.setPrefHeight(44);
         modalOkBtn.setFont(Font.loadFont("file:assets/fonts/Aleo-Bold.ttf", 15));
+        // ── FIX: setDefaultButton(true) so pressing Enter fires this button ──
+        modalOkBtn.setDefaultButton(true);
         String okBase  = "-fx-background-color: #2ecc40;-fx-text-fill: white;" +
                          "-fx-font-size: 15px;-fx-font-weight: bold;-fx-font-family: 'Aleo';" +
                          "-fx-background-radius: 12;-fx-cursor: hand;";
@@ -346,7 +350,7 @@ public class auth_ui {
             openPosWindow(stage);
         });
 
-        modalCard.getChildren().addAll(modalIcon, modalMsg, modalOkBtn);
+        modalCard.getChildren().addAll(checkIcon, modalMsg, modalOkBtn);
         overlayBackdrop.getChildren().add(modalCard);
 
         // ── Wire manager confirm ───────────────────────────
@@ -359,7 +363,7 @@ public class auth_ui {
             if (result.success) {
                 mgrError.setVisible(false);
                 modalMsg.setText("Welcome, " + auth_util.getCurrentName() + "!");
-                showOverlay(overlayBackdrop);
+                showOverlay(overlayBackdrop, modalOkBtn);
             } else {
                 mgrError.setText(result.message);
                 mgrError.setVisible(true);
@@ -405,6 +409,14 @@ public class auth_ui {
         root.getChildren().addAll(background, container, overlayBackdrop);
 
         Scene scene = new Scene(root, screenW, screenH);
+
+        // ── FIX: Scene-level Enter key handler as a safety net ────────────
+        scene.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.ENTER && overlayBackdrop.isVisible()) {
+                modalOkBtn.fire();
+            }
+        });
+
         stage.setTitle("Cafe Saburo");
         stage.setScene(scene);
         stage.setResizable(false);
@@ -413,14 +425,15 @@ public class auth_ui {
     }
 
     // ══════════════════════════════════════════════════════
-    //  OVERLAY FADE-IN
+    //  OVERLAY FADE-IN  — focuses the OK button so Enter works immediately
     // ══════════════════════════════════════════════════════
-    private void showOverlay(StackPane overlay) {
+    private void showOverlay(StackPane overlay, Button focusTarget) {
         overlay.setOpacity(0);
         overlay.setVisible(true);
         FadeTransition ft = new FadeTransition(Duration.millis(220), overlay);
         ft.setFromValue(0);
         ft.setToValue(1);
+        ft.setOnFinished(e -> focusTarget.requestFocus());
         ft.play();
     }
 

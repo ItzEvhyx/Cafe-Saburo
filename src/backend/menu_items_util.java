@@ -17,10 +17,7 @@ import java.util.Set;
 public class menu_items_util {
 
     // ══════════════════════════════════════════════════════
-    //  DIAGNOSTIC  — call this once on startup to confirm
-    //  the DB is reachable and the table has rows.
-    //  Output goes to System.out so you see it in your IDE
-    //  console the moment the app launches.
+    //  DIAGNOSTIC
     // ══════════════════════════════════════════════════════
     public static void runStartupDiagnostic(Connection conn) {
         if (conn == null) {
@@ -35,7 +32,6 @@ public class menu_items_util {
             System.err.println("[DIAGNOSTIC] Could not read catalog/schema: " + e.getMessage());
         }
 
-        // Count total rows so we know the table exists and has data
         String countSql = "SELECT COUNT(*) AS total, " +
                           "SUM(CASE WHEN is_archived = 0 THEN 1 ELSE 0 END) AS active, " +
                           "SUM(CASE WHEN is_archived = 1 THEN 1 ELSE 0 END) AS archived " +
@@ -43,23 +39,14 @@ public class menu_items_util {
         try (PreparedStatement ps = conn.prepareStatement(countSql);
              ResultSet rs = ps.executeQuery()) {
             if (rs.next()) {
-                int total    = rs.getInt("total");
-                int active   = rs.getInt("active");
-                int archived = rs.getInt("archived");
-                System.out.println("[DIAGNOSTIC] dbo.menu_items row count → total=" + total
-                        + "  active=" + active + "  archived=" + archived);
-                if (total == 0) {
-                    System.err.println("[DIAGNOSTIC] *** TABLE IS EMPTY ***  " +
-                            "Run menu_items_setup.sql in SSMS to seed data.");
-                }
+                System.out.println("[DIAGNOSTIC] dbo.menu_items row count → total=" + rs.getInt("total")
+                        + "  active=" + rs.getInt("active") + "  archived=" + rs.getInt("archived"));
             }
         } catch (SQLException e) {
             System.err.println("[DIAGNOSTIC] Could not query dbo.menu_items: " + e.getMessage());
-            System.err.println("[DIAGNOSTIC] Check that the table exists in the correct DB/schema.");
             e.printStackTrace();
         }
 
-        // Show every distinct sizes value — catches spacing/casing differences
         String sizesSql = "SELECT DISTINCT sizes, COUNT(*) AS row_count " +
                           "FROM dbo.menu_items GROUP BY sizes ORDER BY sizes";
         try (PreparedStatement ps = conn.prepareStatement(sizesSql);
@@ -77,10 +64,17 @@ public class menu_items_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  FETCH  (populates cachedRows in menu_items_contents)
-    //  Returns: [item_id, item_name, sizes, display_price]
-    //  display_price: "100 / 105"  (Small/Large)
-    //              or "140"        (One Size)
+    //  FETCH — ONE ROW PER SIZE/PRICE (3NF compliant)
+    //
+    //  Returns String[5] per row:
+    //    [0] item_id
+    //    [1] item_name
+    //    [2] size_label   — "Small", "Large", or "One Size"
+    //    [3] price        — price for that specific size as a plain integer string
+    //    [4] sizes_raw    — original sizes value from DB (used for edits/logic)
+    //
+    //  A "Small, Large" item produces TWO rows (Small row, then Large row).
+    //  A "One Size" item produces ONE row.
     // ══════════════════════════════════════════════════════
     public static List<String[]> fetchMenuItems(Connection conn, String tab) {
         List<String[]> rows = new ArrayList<>();
@@ -92,14 +86,7 @@ public class menu_items_util {
         int isArchived = tab.equals("archived") ? 1 : 0;
 
         String sql =
-            "SELECT item_id, item_name, sizes, " +
-            "CASE " +
-            "  WHEN LOWER(LTRIM(RTRIM(sizes))) = 'small, large' " +
-            "    THEN CAST(CAST(ISNULL(price_small, 0) AS INT) AS VARCHAR)" +
-            "       + ' / ' " +
-            "       + CAST(CAST(ISNULL(price_large, 0) AS INT) AS VARCHAR) " +
-            "  ELSE CAST(CAST(ISNULL(price, 0) AS INT) AS VARCHAR) " +
-            "END AS display_price " +
+            "SELECT item_id, item_name, sizes, price_small, price_large, price " +
             "FROM dbo.menu_items " +
             "WHERE is_archived = ? " +
             "ORDER BY " +
@@ -119,16 +106,26 @@ public class menu_items_util {
             ps.setInt(1, isArchived);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    String displayPrice = rs.getString("display_price");
-                    rows.add(new String[]{
-                        rs.getString("item_id"),
-                        rs.getString("item_name"),
-                        rs.getString("sizes"),
-                        displayPrice != null ? displayPrice : "0"
-                    });
+                    String itemId   = rs.getString("item_id");
+                    String itemName = rs.getString("item_name");
+                    String sizes    = rs.getString("sizes");
+                    String sizesNorm = sizes != null ? sizes.toLowerCase().trim() : "";
+
+                    if (sizesNorm.equals("small, large")) {
+                        // Two atomic rows — one per size
+                        int priceSmall = (int) Math.round(rs.getDouble("price_small"));
+                        int priceLarge = (int) Math.round(rs.getDouble("price_large"));
+                        rows.add(new String[]{ itemId, itemName, "Small", String.valueOf(priceSmall), sizes });
+                        rows.add(new String[]{ itemId, itemName, "Large", String.valueOf(priceLarge), sizes });
+                    } else {
+                        // One atomic row
+                        int price = (int) Math.round(rs.getDouble("price"));
+                        String sizeLabel = (sizes != null && !sizes.isBlank()) ? sizes : "One Size";
+                        rows.add(new String[]{ itemId, itemName, sizeLabel, String.valueOf(price), sizes });
+                    }
                 }
             }
-            System.out.println("[menu_items_util] fetchMenuItems(tab=" + tab + ") → " + rows.size() + " rows");
+            System.out.println("[menu_items_util] fetchMenuItems(tab=" + tab + ") → " + rows.size() + " size-rows");
         } catch (SQLException e) {
             System.err.println("[menu_items_util] fetchMenuItems error: " + e.getMessage());
             e.printStackTrace();
@@ -137,18 +134,20 @@ public class menu_items_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  SEARCH  (client-side filter)
+    //  SEARCH (client-side filter on 3NF rows)
+    //  Matches on item_id, item_name, size_label, or price
     // ══════════════════════════════════════════════════════
     public static List<String[]> getFilteredRows(List<String[]> rows, String query) {
         if (query == null || query.isBlank()) return rows;
         String q = query.toLowerCase();
         List<String[]> result = new ArrayList<>();
         for (String[] r : rows) {
-            for (String cell : r) {
-                if (cell != null && cell.toLowerCase().contains(q)) {
-                    result.add(r);
-                    break;
-                }
+            // Check item_id [0], item_name [1], size_label [2], price [3]
+            if ((r[0] != null && r[0].toLowerCase().contains(q)) ||
+                (r[1] != null && r[1].toLowerCase().contains(q)) ||
+                (r[2] != null && r[2].toLowerCase().contains(q)) ||
+                (r[3] != null && r[3].toLowerCase().contains(q))) {
+                result.add(r);
             }
         }
         return result;
@@ -192,7 +191,7 @@ public class menu_items_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  UPDATE  (full update — name + sizes + prices)
+    //  UPDATE (full update — name + sizes + prices)
     // ══════════════════════════════════════════════════════
     public static boolean updateMenuItem(Connection conn,
                                           String itemId,
@@ -223,32 +222,53 @@ public class menu_items_util {
         }
     }
 
-    // ── Convenience overload used by inline editable cells ──
-    public static boolean updateMenuItemFromRow(Connection conn, String[] row) {
-        if (conn == null || row == null || row.length < 4) return false;
-        String itemId   = row[0];
-        String itemName = row[1];
-        String sizes    = row[2];
-        String disprice = row[3] != null ? row[3].replace("₱", "").trim() : "";
+    // ══════════════════════════════════════════════════════
+    //  UPDATE FROM 3NF ROW
+    //  row: [0]=item_id, [1]=item_name, [2]=size_label, [3]=price, [4]=sizes_raw
+    //
+    //  Because each row is now atomic, we must reconstruct the full DB record.
+    //  For Small/Large items we look up the sibling row to get both prices.
+    // ══════════════════════════════════════════════════════
+    public static boolean updateMenuItemFromRow(Connection conn, String[] row, List<String[]> allCachedRows) {
+        if (conn == null || row == null || row.length < 5) return false;
 
-        if (disprice.isEmpty()) return false;
+        String itemId    = row[0];
+        String itemName  = row[1];
+        String sizeLabel = row[2];
+        String priceStr  = row[3] != null ? row[3].replace("₱", "").trim() : "";
+        String sizesRaw  = row[4];
+
+        if (priceStr.isEmpty()) return false;
 
         Double priceSmall = null, priceLarge = null, price = null;
         try {
-            String sizesNorm = sizes != null ? sizes.toLowerCase().trim() : "";
-            if (sizesNorm.equals("small, large") && disprice.contains("/")) {
-                String[] parts = disprice.split("/");
-                priceSmall = Double.parseDouble(parts[0].trim());
-                priceLarge = Double.parseDouble(parts[1].trim());
+            String sizesNorm = sizesRaw != null ? sizesRaw.toLowerCase().trim() : "";
+            if (sizesNorm.equals("small, large")) {
+                // Find sibling rows for same item_id to get both prices
+                double currentPrice = Double.parseDouble(priceStr);
+                double siblingPrice = currentPrice; // fallback
+                for (String[] r : allCachedRows) {
+                    if (r[0].equals(itemId) && !r[2].equals(sizeLabel)) {
+                        try { siblingPrice = Double.parseDouble(r[3]); } catch (NumberFormatException ignored) {}
+                        break;
+                    }
+                }
+                if (sizeLabel.equalsIgnoreCase("Small")) {
+                    priceSmall = currentPrice;
+                    priceLarge = siblingPrice;
+                } else {
+                    priceLarge = currentPrice;
+                    priceSmall = siblingPrice;
+                }
             } else {
-                price = Double.parseDouble(disprice.trim());
+                price = Double.parseDouble(priceStr);
             }
         } catch (NumberFormatException e) {
-            System.err.println("[menu_items_util] updateMenuItemFromRow parse error for value '"
-                + disprice + "': " + e.getMessage());
+            System.err.println("[menu_items_util] updateMenuItemFromRow parse error: " + e.getMessage());
             return false;
         }
-        return updateMenuItem(conn, itemId, itemName, sizes, priceSmall, priceLarge, price);
+
+        return updateMenuItem(conn, itemId, itemName, sizesRaw, priceSmall, priceLarge, price);
     }
 
     // ══════════════════════════════════════════════════════
@@ -269,30 +289,7 @@ public class menu_items_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  ARCHIVE ALL / RESTORE ALL
-    // ══════════════════════════════════════════════════════
-    public static void archiveAll(Connection conn) {
-        if (conn == null) return;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.menu_items SET is_archived = 1 WHERE is_archived = 0")) {
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            System.err.println("[menu_items_util] archiveAll error: " + e.getMessage());
-        }
-    }
-
-    public static void restoreAll(Connection conn) {
-        if (conn == null) return;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE dbo.menu_items SET is_archived = 0 WHERE is_archived = 1")) {
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            System.err.println("[menu_items_util] restoreAll error: " + e.getMessage());
-        }
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  HARD DELETE ALL  (by tab)
+    //  HARD DELETE ALL (by tab)
     // ══════════════════════════════════════════════════════
     public static void hardDeleteAll(Connection conn, String tab) {
         if (conn == null) return;
@@ -308,6 +305,7 @@ public class menu_items_util {
 
     // ══════════════════════════════════════════════════════
     //  EXPORT CSV
+    //  Exports one row per DB record (not per size-row) for readability
     // ══════════════════════════════════════════════════════
     public static void exportCsv(List<String[]> cachedRows, String tab, Stage stage) {
         FileChooser fc = new FileChooser();
@@ -317,8 +315,9 @@ public class menu_items_util {
         java.io.File file = fc.showSaveDialog(stage);
         if (file == null) return;
 
+        // De-duplicate: only export first size-row per item_id
         try (PrintWriter pw = new PrintWriter(new FileWriter(file))) {
-            pw.println("Item ID,Item Name,Sizes,Price");
+            pw.println("Item ID,Item Name,Size,Price");
             for (String[] row : cachedRows) {
                 pw.println(
                     escapeCsv(row[0]) + "," +

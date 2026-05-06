@@ -1,5 +1,7 @@
 package frontend;
 
+import backend.customers_utils;
+
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
@@ -12,18 +14,10 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.stage.FileChooser;
-import javafx.stage.Stage;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -47,7 +41,6 @@ public class customers_contents {
     private static final double HEADER_ROW_H = 46;
     private static final double CHECKBOX_COL = 48;
 
-    // ── Fixed modal dimensions ────────────────────────────
     private static final double MODAL_W = 440;
     private static final double MODAL_H = 260;
 
@@ -60,15 +53,6 @@ public class customers_contents {
     private static final String ROW_ALT_BG   = "#FDF5F6";
     private static final String ROW_WHITE_BG = "white";
     private static final String HEADER_BG    = "#F5E8EA";
-
-    private static final String PILL_GOLD_BG   = "#FFF3CD";
-    private static final String PILL_GOLD_FG   = "#856404";
-    private static final String PILL_SILVER_BG = "#E2E3E5";
-    private static final String PILL_SILVER_FG = "#383D41";
-    private static final String PILL_BRONZE_BG = "#F5E6D3";
-    private static final String PILL_BRONZE_FG = "#7D4E1B";
-    private static final String PILL_NONE_BG   = "#F8F9FA";
-    private static final String PILL_NONE_FG   = "#6C757D";
 
     // ══════════════════════════════════════════════════════
     //  STATE
@@ -83,7 +67,6 @@ public class customers_contents {
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
-    // rows: [customerId, customerName, latestOrderId, loyaltyPts]
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
@@ -97,7 +80,6 @@ public class customers_contents {
     private TextField searchField;
     private HBox      searchBar;
 
-    // ── Layout values needed for repositioning ────────────
     private double btnY;
     private double gap;
     private double searchW;
@@ -105,35 +87,11 @@ public class customers_contents {
     private double archAllX;
     private double confirmX;
 
-    private static boolean fontsLoaded = false;
-
-    private static void loadFonts() {
-        if (fontsLoaded) return;
-        String[] variants = {
-            "Aleo-Black","Aleo-BlackItalic","Aleo-Bold","Aleo-BoldItalic",
-            "Aleo-ExtraBold","Aleo-ExtraBoldItalic","Aleo-ExtraLight","Aleo-ExtraLightItalic",
-            "Aleo-Italic","Aleo-Light","Aleo-LightItalic","Aleo-Medium","Aleo-MediumItalic",
-            "Aleo-Regular","Aleo-SemiBold","Aleo-SemiBoldItalic","Aleo-Thin","Aleo-ThinItalic"
-        };
-        for (String v : variants) Font.loadFont("file:assets/fonts/" + v + ".ttf", 12);
-        fontsLoaded = true;
-    }
-
     public customers_contents(double totalW, double totalH, Connection conn) {
         this.totalW = totalW;
         this.totalH = totalH;
         this.conn   = conn;
-        loadFonts();
-    }
-
-    // ── Reposition search bar depending on archiveMode ────
-    // When archiveMode is ON:  right edge clamps to left of archiveAll button
-    // When archiveMode is OFF: right edge clamps to left of activeTab button
-    private void repositionSearchBar() {
-        if (searchBar == null) return;
-        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
-        double newX = rightEdge - searchW;
-        searchBar.setLayoutX(newX);
+        customers_utils.loadFonts();
     }
 
     // ══════════════════════════════════════════════════════
@@ -141,177 +99,17 @@ public class customers_contents {
     // ══════════════════════════════════════════════════════
     public void prependOrUpdateCustomer(String customerId, String customerName, String orderId) {
         if (!currentTab.equals("active")) return;
-
-        boolean found = false;
-        for (String[] row : cachedRows) {
-            if (row[0].equals(customerId)) {
-                row[2] = orderId;
-                int pts = 0;
-                try { pts = Integer.parseInt(row[3]); } catch (NumberFormatException ignored) {}
-                row[3] = String.valueOf(pts + 10);
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
-            cachedRows.add(0, new String[]{
-                customerId,
-                customerName,
-                orderId,
-                "10"
-            });
-        }
-
-        cachedRows.sort((a, b) -> {
-            int ptsA = 0, ptsB = 0;
-            try { ptsA = Integer.parseInt(a[3]); } catch (NumberFormatException ignored) {}
-            try { ptsB = Integer.parseInt(b[3]); } catch (NumberFormatException ignored) {}
-            if (ptsB != ptsA) return Integer.compare(ptsB, ptsA);
-            return a[1].compareToIgnoreCase(b[1]);
-        });
-
+        customers_utils.prependOrUpdateCustomer(cachedRows, customerId, customerName, orderId);
         rebuildTable();
     }
 
     // ══════════════════════════════════════════════════════
-    //  FETCH ROWS
+    //  SEARCH BAR REPOSITIONING
     // ══════════════════════════════════════════════════════
-    private List<String[]> fetchCustomers(String tab) {
-        List<String[]> rows = new ArrayList<>();
-        if (conn == null) return rows;
-        try { if (conn.isClosed()) return rows; } catch (Exception e) { return rows; }
-
-        String sql =
-            "SELECT " +
-            "    c.customer_id, " +
-            "    c.customer_name, " +
-            "    COALESCE(o.latest_order_id, 'N/A') AS latest_order_id, " +
-            "    COALESCE(o.order_count * 10, 0)    AS loyalty_pts " +
-            "FROM dbo.Customers AS c " +
-            "LEFT JOIN ( " +
-            "    SELECT customer_id, COUNT(order_id) AS order_count, MAX(order_id) AS latest_order_id " +
-            "    FROM dbo.Orders WHERE is_deleted = 0 GROUP BY customer_id " +
-            ") AS o ON c.customer_id = o.customer_id " +
-            "WHERE c.is_deleted = 0 AND c.status = ? " +
-            "ORDER BY loyalty_pts DESC, c.customer_name ASC";
-
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tab);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                rows.add(new String[]{
-                    rs.getString("customer_id")     != null ? rs.getString("customer_id")     : "—",
-                    rs.getString("customer_name")   != null ? rs.getString("customer_name")   : "—",
-                    rs.getString("latest_order_id") != null ? rs.getString("latest_order_id") : "N/A",
-                    String.valueOf(rs.getInt("loyalty_pts"))
-                });
-            }
-            rs.close();
-        } catch (Exception e) { e.printStackTrace(); }
-        return rows;
-    }
-
-    // ── Filtered rows based on current searchQuery ────────
-    // Searches by customer name (index 1) or order ID (index 2)
-    private List<String[]> getFilteredRows() {
-        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
-        String q = searchQuery.trim().toLowerCase();
-        List<String[]> filtered = new ArrayList<>();
-        for (String[] row : cachedRows) {
-            if (row[1].toLowerCase().contains(q) || row[2].toLowerCase().contains(q))
-                filtered.add(row);
-        }
-        return filtered;
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  DB OPERATIONS
-    // ══════════════════════════════════════════════════════
-    private void archiveSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Orders SET status = 'archived' WHERE customer_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Customers SET status = 'archived' WHERE customer_id = ?")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void restoreSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Orders SET status = 'active' WHERE customer_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.Customers SET status = 'active' WHERE customer_id = ?")) {
-                ps.setString(1, id); ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void hardDeleteAll() {
-        if (conn == null) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM dbo.Orders WHERE customer_id IN " +
-                "(SELECT customer_id FROM dbo.Customers WHERE status = ?)")) {
-            ps.setString(1, currentTab); ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM dbo.Customers WHERE status = ?")) {
-            ps.setString(1, currentTab); ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  CSV EXPORT
-    // ══════════════════════════════════════════════════════
-    private void exportCsv() {
-        List<String[]> rows = getFilteredRows();
-        if (rows.isEmpty()) return;
-
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("Save Customer List as CSV");
-        chooser.setInitialFileName("customers_" + currentTab + ".csv");
-        chooser.getExtensionFilters().add(
-            new FileChooser.ExtensionFilter("CSV Files", "*.csv")
-        );
-
-        Stage stage = null;
-        try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
-
-        File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
-        if (file == null) return;
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Customer ID,Customer Name,Order ID,Loyalty Pts");
-            writer.newLine();
-            for (String[] row : rows) {
-                writer.write(
-                    escapeCsv(row[0]) + "," +
-                    escapeCsv(row[1]) + "," +
-                    escapeCsv(row[2]) + "," +
-                    escapeCsv(row[3])
-                );
-                writer.newLine();
-            }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private String escapeCsv(String value) {
-        if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        return value;
+    private void repositionSearchBar() {
+        if (searchBar == null) return;
+        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
+        searchBar.setLayoutX(rightEdge - searchW);
     }
 
     // ══════════════════════════════════════════════════════
@@ -327,16 +125,17 @@ public class customers_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH    = 36;
-        btnY           = TOP_PADDING + 10;
-        double iconW   = 36;
-        gap            = 8;
-        double tabW    = 90;
+        double btnH     = 36;
+        btnY            = TOP_PADDING + 10;
+        double iconW    = 36;
+        gap             = 8;
+        double tabW     = 90;
         double archAllW = 100;
         double confirmW = 90;
-        double csvW    = 120;
-        searchW        = 200;
+        double csvW     = 120;
+        searchW         = 200;
 
+        // ── Title ─────────────────────────────────────────
         Label title = new Label("Customer List");
         title.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -345,6 +144,7 @@ public class customers_contents {
             "-fx-text-fill: " + ACCENT + ";"
         );
 
+        // ── Archive toggle button ─────────────────────────
         FontIcon boxIcon = new FontIcon(FontAwesomeSolid.ARCHIVE);
         boxIcon.setIconSize(15);
         boxIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -365,8 +165,7 @@ public class customers_contents {
         titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side button layout (right → left) ───────
-        // delete | gap | exportCsv | gap | archivedTab | gap | activeTab | gap | confirm | gap | archiveAll | gap | search
+        // ── Right-side button positions (right → left) ────
         double deleteX      = totalW - SIDE_PADDING - iconW;
         double exportCsvX   = deleteX      - gap - csvW;
         double archivedTabX = exportCsvX   - gap - tabW;
@@ -374,9 +173,7 @@ public class customers_contents {
         confirmX            = activeTabX   - gap - confirmW;
         archAllX            = confirmX     - gap - archAllW;
 
-        // Initial search bar position (archive mode OFF → clamp to left of activeTab)
-        double searchRightEdge = activeTabX - gap;
-        double searchX         = searchRightEdge - searchW;
+        double searchX = (activeTabX - gap) - searchW;
 
         // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
@@ -398,7 +195,7 @@ public class customers_contents {
                 "Customers (" + currentTab + ")",
                 "This will permanently remove all customers and their orders in this view.\nThis action cannot be undone.",
                 () -> {
-                    hardDeleteAll();
+                    customers_utils.hardDeleteAll(conn, currentTab);
                     cachedRows.clear();
                     selectedIds.clear();
                     rebuildTable();
@@ -422,7 +219,9 @@ public class customers_contents {
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
-        exportCsvBtn.setOnMouseClicked(e -> exportCsv());
+        exportCsvBtn.setOnMouseClicked(e ->
+            customers_utils.exportCsv(customers_utils.getFilteredRows(cachedRows, searchQuery), currentTab, root)
+        );
 
         // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
@@ -436,16 +235,16 @@ public class customers_contents {
         activeTabBtn.setOnMouseEntered(e -> {
             if (!currentTab.equals("active")) activeTabBtn.setStyle(tabBtnHoverStyle());
         });
-        activeTabBtn.setOnMouseExited(e -> activeTabBtn.setStyle(tabBtnStyle(currentTab.equals("active"))));
+        activeTabBtn.setOnMouseExited(e  -> activeTabBtn.setStyle(tabBtnStyle(currentTab.equals("active"))));
         activeTabBtn.setOnMouseClicked(e -> switchTab("active"));
 
         archivedTabBtn.setOnMouseEntered(e -> {
             if (!currentTab.equals("archived")) archivedTabBtn.setStyle(tabBtnHoverStyle());
         });
-        archivedTabBtn.setOnMouseExited(e -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
+        archivedTabBtn.setOnMouseExited(e  -> archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
-        // ── Archive All button ────────────────────────────
+        // ── Archive All / Restore All button ─────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW);
@@ -477,8 +276,8 @@ public class customers_contents {
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
-            if (currentTab.equals("active")) archiveSelected(selectedIds);
-            else restoreSelected(selectedIds);
+            if (currentTab.equals("active")) customers_utils.archiveSelected(conn, selectedIds);
+            else                             customers_utils.restoreSelected(conn, selectedIds);
             selectedIds.clear();
             archiveMode = false;
             updateArchiveBtnIcon();
@@ -486,7 +285,7 @@ public class customers_contents {
             confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
             repositionSearchBar();
-            cachedRows = fetchCustomers(currentTab);
+            cachedRows = customers_utils.fetchCustomers(conn, currentTab);
             rebuildTable();
         });
 
@@ -532,7 +331,7 @@ public class customers_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        cachedRows  = fetchCustomers("active");
+        cachedRows  = customers_utils.fetchCustomers(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
@@ -585,7 +384,7 @@ public class customers_contents {
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
         repositionSearchBar();
-        cachedRows = fetchCustomers(tab);
+        cachedRows = customers_utils.fetchCustomers(conn, tab);
         rebuildTable();
     }
 
@@ -611,7 +410,7 @@ public class customers_contents {
 
         VBox card = new VBox(16);
         card.setAlignment(Pos.CENTER);
-        card.setPrefWidth(MODAL_W); card.setMinWidth(MODAL_W); card.setMaxWidth(MODAL_W);
+        card.setPrefWidth(MODAL_W);  card.setMinWidth(MODAL_W);  card.setMaxWidth(MODAL_W);
         card.setPrefHeight(MODAL_H); card.setMinHeight(MODAL_H); card.setMaxHeight(MODAL_H);
         card.setPadding(new Insets(36, 40, 32, 40));
         card.setStyle(
@@ -696,7 +495,7 @@ public class customers_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        VBox tableBox = buildTable(tableW, getFilteredRows());
+        VBox tableBox = buildTable(tableW, customers_utils.getFilteredRows(cachedRows, searchQuery));
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -733,8 +532,9 @@ public class customers_contents {
         table.getChildren().add(buildHeaderRow(tableW, dataW));
 
         if (rows.isEmpty()) {
-            String msg = !searchQuery.isBlank() ? "No results found for \"" + searchQuery + "\"."
-                       : currentTab.equals("archived") ? "No archived customers." : "No customers found.";
+            String msg = !searchQuery.isBlank()
+                ? "No results found for \"" + searchQuery + "\"."
+                : currentTab.equals("archived") ? "No archived customers." : "No customers found.";
             Label empty = new Label(msg);
             empty.setStyle(
                 "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -800,7 +600,8 @@ public class customers_contents {
     }
 
     private HBox buildDataRow(String custId, String custName, String orderId,
-                               String loyaltyPts, String bg, double tableW, double dataW, boolean isLast) {
+                               String loyaltyPts, String bg,
+                               double tableW, double dataW, boolean isLast) {
         HBox row = new HBox(0);
         row.setPrefHeight(ROW_H);
         row.setAlignment(Pos.CENTER_LEFT);
@@ -819,6 +620,10 @@ public class customers_contents {
             row.setStyle(rowStyle(cur, bottomRadius, borderBottom));
         });
 
+        int pts = 0;
+        try { pts = Integer.parseInt(loyaltyPts); } catch (NumberFormatException ignored) {}
+        String[] pillColors = customers_utils.loyaltyPillColors(pts);
+
         row.getChildren().addAll(
             buildTextCell(custId,   dataW * COL_CUST_ID,   true),
             buildColDivider(),
@@ -826,7 +631,7 @@ public class customers_contents {
             buildColDivider(),
             buildTextCell(orderId,  dataW * COL_ORDER_ID,  false),
             buildColDivider(),
-            buildLoyaltyCell(loyaltyPts, dataW * COL_LOYALTY)
+            buildLoyaltyCell(pts, loyaltyPts, pillColors, dataW * COL_LOYALTY)
         );
 
         if (archiveMode) {
@@ -853,7 +658,7 @@ public class customers_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  HELPERS
+    //  UI HELPERS
     // ══════════════════════════════════════════════════════
     private String rowStyle(String bg, String bottomRadius, String borderBottom) {
         return "-fx-background-color: " + bg + ";" +
@@ -877,10 +682,7 @@ public class customers_contents {
         return lbl;
     }
 
-    private HBox buildLoyaltyCell(String loyaltyPts, double width) {
-        int pts = 0;
-        try { pts = Integer.parseInt(loyaltyPts); } catch (NumberFormatException ignored) {}
-        String[] colors = loyaltyPillColors(pts);
+    private HBox buildLoyaltyCell(int pts, String loyaltyPts, String[] colors, double width) {
         Label pill = new Label(pts + " pts");
         pill.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';" +
@@ -897,13 +699,6 @@ public class customers_contents {
         cell.setPadding(new Insets(0, 0, 0, 16));
         cell.setAlignment(Pos.CENTER_LEFT);
         return cell;
-    }
-
-    private String[] loyaltyPillColors(int pts) {
-        if (pts >= 50) return new String[]{ PILL_GOLD_BG,   PILL_GOLD_FG   };
-        if (pts >= 30) return new String[]{ PILL_SILVER_BG, PILL_SILVER_FG };
-        if (pts >= 10) return new String[]{ PILL_BRONZE_BG, PILL_BRONZE_FG };
-        return             new String[]{ PILL_NONE_BG,   PILL_NONE_FG   };
     }
 
     private Region buildColDivider() {

@@ -412,7 +412,7 @@ public class PurchasesUtil {
     private String nvl(String value) {
         return value != null ? value : "—";
     }
-
+ 
     /** Escapes a value for CSV output. */
     private String escapeCsv(String v) {
         if (v == null) return "";

@@ -37,10 +37,10 @@ public class menu_items_contents {
     private static final double SIDE_PADDING = 24;
     private static final double HEADER_H     = 56;
 
-    // Columns: Item ID | Item Name | Sizes | Price
+    // Columns: Item ID | Item Name | Size | Price
     private static final double COL_ITEM_ID   = 0.12;
     private static final double COL_ITEM_NAME = 0.38;
-    private static final double COL_SIZES     = 0.28;
+    private static final double COL_SIZE      = 0.28;
     private static final double COL_PRICE     = 0.22;
 
     private static final double ROW_H        = 44;
@@ -62,12 +62,13 @@ public class menu_items_contents {
     // ══════════════════════════════════════════════════════
     //  STYLE CONSTANTS
     // ══════════════════════════════════════════════════════
-    private static final String ACCENT       = "#882F39";
-    private static final String FONT_FAMILY  = "Aleo";
-    private static final String TABLE_BORDER = "#882F39";
-    private static final String ROW_ALT_BG   = "#FDF5F6";
-    private static final String ROW_WHITE_BG = "white";
-    private static final String HEADER_BG    = "#F5E8EA";
+    private static final String ACCENT            = "#882F39";
+    private static final String FONT_FAMILY       = "Aleo";
+    private static final String TABLE_BORDER      = "#882F39";
+    private static final String ROW_ALT_BG        = "#FDF5F6";
+    private static final String ROW_WHITE_BG      = "white";
+    private static final String HEADER_BG         = "#F5E8EA";
+    private static final String CONTINUATION_TEXT = "#888888";
 
     // ══════════════════════════════════════════════════════
     //  STATE
@@ -125,14 +126,19 @@ public class menu_items_contents {
     //  PUBLIC LIVE-UPDATE API
     // ══════════════════════════════════════════════════════
     public void prependItem(String itemId, String itemName, String sizes, String price) {
-        String[] newRow = new String[]{
-            itemId   != null ? itemId   : "--",
-            itemName != null ? itemName : "--",
-            sizes    != null ? sizes    : "--",
-            price    != null ? price    : "0"
-        };
+        // For a new "Small, Large" item, prepend two atomic rows; else one row
         if (root != null && currentTab.equals("active")) {
-            cachedRows.add(0, newRow);
+            String sizesNorm = sizes != null ? sizes.toLowerCase().trim() : "";
+            if (sizesNorm.equals("small, large") && price != null && price.contains("/")) {
+                String[] parts = price.split("/");
+                String priceSmall = parts[0].trim();
+                String priceLarge = parts.length > 1 ? parts[1].trim() : parts[0].trim();
+                cachedRows.add(0, new String[]{ itemId, itemName, "Large",  priceLarge, sizes });
+                cachedRows.add(0, new String[]{ itemId, itemName, "Small",  priceSmall, sizes });
+            } else {
+                String sizeLabel = (sizes != null && !sizes.isBlank()) ? sizes : "One Size";
+                cachedRows.add(0, new String[]{ itemId, itemName, sizeLabel, price != null ? price : "0", sizes });
+            }
             rebuildTable();
         }
     }
@@ -148,7 +154,7 @@ public class menu_items_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  CUSTOM DROPDOWN  (ported from purchases_contents)
+    //  CUSTOM DROPDOWN
     // ══════════════════════════════════════════════════════
     private VBox buildDropdownField(FontAwesomeSolid iconCode, String label) {
         Label fieldLabel = new Label(label);
@@ -492,7 +498,7 @@ public class menu_items_contents {
         saveBtn.setOnMouseExited(e  -> saveBtn.setStyle(addSaveBtnStyle(false)));
         saveBtn.setOnMouseClicked(e -> {
             String nameVal     = nameInput.getText().trim();
-            String categoryVal = getDropdownValue(categoryField);   // ← now reads from dropdown
+            String categoryVal = getDropdownValue(categoryField);
             String priceVal    = priceInput.getText().trim().replace("₱", "").trim();
 
             String sizesVal;
@@ -608,7 +614,6 @@ public class menu_items_contents {
     //  MAIN VIEW
     // ══════════════════════════════════════════════════════
     public Pane getView() {
-        // ── DIAGNOSTIC: prints DB state to console on startup ──
         menu_items_util.runStartupDiagnostic(conn);
 
         stackRoot = new StackPane();
@@ -786,6 +791,7 @@ public class menu_items_contents {
         archiveAllBtn.setOnMouseExited(e  -> archiveAllBtn.setStyle(archiveAllBtnStyle(false)));
         archiveAllBtn.setOnMouseClicked(e -> {
             selectedIds.clear();
+            // Select by unique item_id only (not per-size row)
             for (String[] row : cachedRows) selectedIds.add(row[0]);
             rebuildTable();
         });
@@ -852,7 +858,6 @@ public class menu_items_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        // ── Initial data load ─────────────────────────────
         cachedRows  = menu_items_util.fetchMenuItems(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
@@ -1020,6 +1025,10 @@ public class menu_items_contents {
 
     // ══════════════════════════════════════════════════════
     //  TABLE BUILDER
+    //  Mirrors suppliers_contents grouping logic:
+    //    - one row per size/price (3NF)
+    //    - Item ID and Item Name shown only on the first row of each item group
+    //    - alternating background per item group (not per size-row)
     // ══════════════════════════════════════════════════════
     private VBox buildTable(double tableW, List<String[]> rows) {
         double dataW = archiveMode ? tableW - CHECKBOX_COL : tableW;
@@ -1030,6 +1039,7 @@ public class menu_items_contents {
             "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.07), 10, 0, 0, 3);"
         );
         table.getChildren().add(buildHeaderRow(tableW, dataW));
+
         if (rows.isEmpty()) {
             String msg = (searchQuery != null && !searchQuery.isBlank())
                 ? "No results found for \"" + searchQuery + "\"."
@@ -1041,13 +1051,23 @@ public class menu_items_contents {
             );
             table.getChildren().add(empty);
         } else {
+            String  prevItemId  = null;
+            boolean isAlt       = false;
+
             for (int i = 0; i < rows.size(); i++) {
-                String[] item = rows.get(i);
-                table.getChildren().add(buildDataRow(
-                    item[0], item[1], item[2], item[3],
-                    i % 2 == 0 ? ROW_WHITE_BG : ROW_ALT_BG,
-                    tableW, dataW, i == rows.size() - 1
-                ));
+                String[] item      = rows.get(i);
+                String   itemId    = item[0];
+                boolean  isLast    = (i == rows.size() - 1);
+
+                // Flip background color at each new item group
+                boolean isFirstInGroup = !itemId.equals(prevItemId);
+                if (isFirstInGroup) {
+                    if (prevItemId != null) isAlt = !isAlt;
+                    prevItemId = itemId;
+                }
+
+                String bg = isAlt ? ROW_ALT_BG : ROW_WHITE_BG;
+                table.getChildren().add(buildDataRow(item, isFirstInGroup, bg, tableW, dataW, isLast));
             }
         }
         return table;
@@ -1065,7 +1085,7 @@ public class menu_items_contents {
         row.getChildren().addAll(
             buildHeaderCell("Item ID",   dataW * COL_ITEM_ID),   buildColDivider(),
             buildHeaderCell("Item Name", dataW * COL_ITEM_NAME), buildColDivider(),
-            buildHeaderCell("Sizes",     dataW * COL_SIZES),     buildColDivider(),
+            buildHeaderCell("Size",      dataW * COL_SIZE),      buildColDivider(),
             buildHeaderCell("Price",     dataW * COL_PRICE)
         );
         if (archiveMode) {
@@ -1089,8 +1109,25 @@ public class menu_items_contents {
         return lbl;
     }
 
-    private HBox buildDataRow(String itemId, String itemName, String sizes, String price,
-                               String bg, double tableW, double dataW, boolean isLast) {
+    // ══════════════════════════════════════════════════════
+    //  DATA ROW BUILDER
+    //
+    //  row: [0]=item_id, [1]=item_name, [2]=size_label, [3]=price, [4]=sizes_raw
+    //
+    //  isFirstInGroup → show item_id and item_name; otherwise show empty cells
+    //  (mirrors suppliers_contents behaviour for supplier_id / supplier_name)
+    // ══════════════════════════════════════════════════════
+    private HBox buildDataRow(String[] item,
+                               boolean isFirstInGroup,
+                               String bg,
+                               double tableW,
+                               double dataW,
+                               boolean isLast) {
+        String itemId    = item[0];
+        String itemName  = item[1];
+        String sizeLabel = item[2];
+        String price     = item[3];
+
         HBox row = new HBox(0);
         row.setAlignment(Pos.TOP_LEFT);
         String  bottomRadius = isLast ? "0 0 10 10" : "0";
@@ -1105,115 +1142,128 @@ public class menu_items_contents {
             row.setStyle(rowStyle(selectedIds.contains(itemId) ? "#FDE8EA" : bg, bottomRadius, borderBottom))
         );
 
-        javafx.scene.Node nameCell;
-        javafx.scene.Node priceCell;
+        // Item ID — shown only on first row of group
+        javafx.scene.Node idCell = buildTextCell(
+            isFirstInGroup ? itemId : "", dataW * COL_ITEM_ID, true, false);
 
-        if (editMode && currentTab.equals("active")) {
-            nameCell  = buildEditableTextCell(itemId, itemName, sizes, price, 1, dataW * COL_ITEM_NAME);
-            priceCell = buildEditableTextCell(itemId, itemName, sizes, price, 3, dataW * COL_PRICE);
+        // Item Name — shown only on first row; editable in edit mode
+        javafx.scene.Node nameCell;
+        if (editMode && currentTab.equals("active") && isFirstInGroup) {
+            nameCell = buildEditableTextCell(item, 1, dataW * COL_ITEM_NAME);
         } else {
-            nameCell  = buildTextCell(itemName, dataW * COL_ITEM_NAME, false);
-            String priceDisplay = (price != null && !price.isEmpty()) ? "₱" + price : "—";
-            priceCell = buildTextCell(priceDisplay, dataW * COL_PRICE, false);
+            nameCell = buildTextCell(
+                isFirstInGroup ? itemName : "",
+                dataW * COL_ITEM_NAME, false, !isFirstInGroup);
         }
 
-        HBox sizesCell = buildSizesCell(sizes, dataW * COL_SIZES);
+        // Size — size badge chip (atomic value per row)
+        HBox sizeCell = buildSizeChipCell(sizeLabel, dataW * COL_SIZE);
+
+        // Price — editable in edit mode; shown with ₱ prefix
+        javafx.scene.Node priceCell;
+        if (editMode && currentTab.equals("active")) {
+            priceCell = buildEditableTextCell(item, 3, dataW * COL_PRICE);
+        } else {
+            String priceDisplay = (price != null && !price.isEmpty()) ? "₱" + price : "—";
+            priceCell = buildTextCell(priceDisplay, dataW * COL_PRICE, false, false);
+        }
 
         row.getChildren().addAll(
-            buildTextCell(itemId, dataW * COL_ITEM_ID, true), buildColDivider(),
-            nameCell,                                          buildColDivider(),
-            sizesCell,                                         buildColDivider(),
+            idCell,     buildColDivider(),
+            nameCell,   buildColDivider(),
+            sizeCell,   buildColDivider(),
             priceCell
         );
 
         if (archiveMode) {
             row.getChildren().add(buildColDivider());
-            CheckBox cb = new CheckBox();
-            cb.setSelected(selected); cb.setStyle("-fx-cursor: hand;");
-            cb.setOnAction(e -> {
-                if (cb.isSelected()) {
-                    selectedIds.add(itemId);
-                    row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom));
-                } else {
-                    selectedIds.remove(itemId);
-                    row.setStyle(rowStyle(bg, bottomRadius, borderBottom));
-                }
-            });
-            HBox cbCell = new HBox(cb);
-            cbCell.setPrefWidth(CHECKBOX_COL);
-            cbCell.setMinHeight(ROW_H);
-            cbCell.setPadding(new Insets(12, 0, 12, 0));
-            cbCell.setAlignment(Pos.TOP_CENTER);
-            row.getChildren().add(cbCell);
+            if (isFirstInGroup) {
+                CheckBox cb = new CheckBox();
+                cb.setSelected(selected); cb.setStyle("-fx-cursor: hand;");
+                cb.setOnAction(e -> {
+                    if (cb.isSelected()) {
+                        selectedIds.add(itemId);
+                        row.setStyle(rowStyle("#FDE8EA", bottomRadius, borderBottom));
+                    } else {
+                        selectedIds.remove(itemId);
+                        row.setStyle(rowStyle(bg, bottomRadius, borderBottom));
+                    }
+                    rebuildTable();
+                });
+                HBox cbCell = new HBox(cb);
+                cbCell.setPrefWidth(CHECKBOX_COL);
+                cbCell.setMinHeight(ROW_H);
+                cbCell.setPadding(new Insets(12, 0, 12, 0));
+                cbCell.setAlignment(Pos.TOP_CENTER);
+                row.getChildren().add(cbCell);
+            } else {
+                // Continuation rows get an empty spacer in the checkbox column
+                Region spacer = new Region();
+                spacer.setPrefWidth(CHECKBOX_COL);
+                spacer.setMinHeight(ROW_H);
+                row.getChildren().add(spacer);
+            }
         }
         return row;
     }
 
-    // ── Sizes badge chip cell ─────────────────────────────
-    private HBox buildSizesCell(String sizes, double width) {
+    // ── Size badge chip cell ──────────────────────────────
+    private HBox buildSizeChipCell(String sizeLabel, double width) {
         HBox cell = new HBox(6);
         cell.setPrefWidth(width);
         cell.setMinHeight(ROW_H);
         cell.setPadding(new Insets(10, 8, 10, 16));
         cell.setAlignment(Pos.CENTER_LEFT);
 
-        if (sizes == null || sizes.isBlank() || sizes.equals("--")) {
+        if (sizeLabel == null || sizeLabel.isBlank() || sizeLabel.equals("--")) {
             Label dash = new Label("—");
             dash.setStyle("-fx-font-family: '" + FONT_FAMILY + "'; -fx-font-size: 13px; -fx-text-fill: #AAAAAA;");
             cell.getChildren().add(dash);
             return cell;
         }
 
-        String[] parts = sizes.split(",");
-        for (String part : parts) {
-            String s = part.trim();
-            if (s.isEmpty()) continue;
-            Label chip = new Label(s);
-            boolean isSmall   = s.equalsIgnoreCase("Small");
-            boolean isLarge   = s.equalsIgnoreCase("Large");
-            boolean isOneSize = s.equalsIgnoreCase("One Size");
+        Label chip = new Label(sizeLabel);
+        boolean isSmall   = sizeLabel.equalsIgnoreCase("Small");
+        boolean isLarge   = sizeLabel.equalsIgnoreCase("Large");
+        boolean isOneSize = sizeLabel.equalsIgnoreCase("One Size");
 
-            String chipBg = isSmall   ? "#E3F2FD"
-                          : isLarge   ? "#F3E5F5"
-                          : isOneSize ? "#E8F5E9"
-                          :             "#F5E8EA";
-            String chipFg = isSmall   ? "#1565C0"
-                          : isLarge   ? "#6A1B9A"
-                          : isOneSize ? "#2E7D32"
-                          :             ACCENT;
+        String chipBg = isSmall   ? "#E3F2FD"
+                      : isLarge   ? "#F3E5F5"
+                      : isOneSize ? "#E8F5E9"
+                      :             "#F5E8EA";
+        String chipFg = isSmall   ? "#1565C0"
+                      : isLarge   ? "#6A1B9A"
+                      : isOneSize ? "#2E7D32"
+                      :             ACCENT;
 
-            chip.setStyle(
-                "-fx-font-family: '" + FONT_FAMILY + "';" +
-                "-fx-font-size: 11px;" +
-                "-fx-font-weight: bold;" +
-                "-fx-text-fill: " + chipFg + ";" +
-                "-fx-background-color: " + chipBg + ";" +
-                "-fx-background-radius: 6;" +
-                "-fx-padding: 2 8 2 8;"
-            );
-            cell.getChildren().add(chip);
-        }
+        chip.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 11px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: " + chipFg + ";" +
+            "-fx-background-color: " + chipBg + ";" +
+            "-fx-background-radius: 6;" +
+            "-fx-padding: 2 8 2 8;"
+        );
+        cell.getChildren().add(chip);
         return cell;
     }
 
     // ══════════════════════════════════════════════════════
     //  EDITABLE TEXT CELL
+    //  row: [0]=item_id, [1]=item_name, [2]=size_label, [3]=price, [4]=sizes_raw
+    //  colIndex: 1 = item_name, 3 = price
     // ══════════════════════════════════════════════════════
-    private HBox buildEditableTextCell(String itemId,
-                                        String currentName, String currentSizes,
-                                        String currentPrice,
-                                        int colIndex, double width) {
+    private HBox buildEditableTextCell(String[] item, int colIndex, double width) {
         String initialValue;
         switch (colIndex) {
-            case 1:  initialValue = currentName  != null ? currentName  : ""; break;
-            case 3:  initialValue = currentPrice != null ? currentPrice : ""; break;
+            case 1:  initialValue = item[1] != null ? item[1] : ""; break;
+            case 3:  initialValue = item[3] != null ? item[3] : ""; break;
             default: initialValue = ""; break;
         }
 
         String promptText = (colIndex == 3)
-            ? (currentSizes != null && currentSizes.equals("Small, Large")
-                ? "e.g. 100 / 120"
-                : "e.g. 150")
+            ? "e.g. 150"
             : "";
 
         TextField field = new TextField(initialValue);
@@ -1235,13 +1285,10 @@ public class menu_items_contents {
         Runnable save = () -> {
             String newVal = field.getText().trim().replace("₱", "").trim();
             if (newVal.isEmpty()) return;
-            for (String[] r : cachedRows) {
-                if (r[0].equals(itemId)) {
-                    r[colIndex] = newVal;
-                    menu_items_util.updateMenuItemFromRow(conn, r);
-                    break;
-                }
-            }
+            // Update the cached row
+            item[colIndex] = newVal;
+            // Persist to DB — pass allCachedRows so sibling prices can be resolved
+            menu_items_util.updateMenuItemFromRow(conn, item, cachedRows);
         };
 
         field.setOnAction(e -> save.run());
@@ -1265,16 +1312,18 @@ public class menu_items_contents {
                "-fx-border-width: 0 0 " + borderBottom + " 0;";
     }
 
-    private HBox buildTextCell(String text, double width, boolean bold) {
-        Label lbl = new Label(text != null ? text : "—");
+    private HBox buildTextCell(String text, double width, boolean bold, boolean muted) {
+        Label lbl = new Label(text != null ? text : "");
         lbl.setPrefWidth(width - 16);
         lbl.setMaxWidth(width - 16);
         lbl.setWrapText(true);
         lbl.setPadding(new Insets(10, 8, 10, 0));
         lbl.setAlignment(Pos.TOP_LEFT);
+        String colour = muted ? CONTINUATION_TEXT : "#333333";
         lbl.setStyle(
             "-fx-font-family: '" + FONT_FAMILY + "';-fx-font-size: 13px;" +
-            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";-fx-text-fill: #333333;"
+            "-fx-font-weight: " + (bold ? "bold" : "normal") + ";" +
+            "-fx-text-fill: " + colour + ";"
         );
         HBox cell = new HBox(lbl);
         cell.setPrefWidth(width);

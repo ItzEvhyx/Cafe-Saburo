@@ -1,5 +1,7 @@
 package frontend;
 
+import backend.timelogs_util;
+
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.CheckBox;
@@ -12,20 +14,11 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.Timestamp;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -58,14 +51,11 @@ public class timelogs_contents {
     //  STYLE CONSTANTS
     // ══════════════════════════════════════════════════════
     private static final String ACCENT       = "#882F39";
-    private static final String FONT_FAMILY  = "Aleo";
+    private static final String FONT_FAMILY  = timelogs_util.FONT_FAMILY;
     private static final String TABLE_BORDER = "#882F39";
     private static final String ROW_ALT_BG   = "#FDF5F6";
     private static final String ROW_WHITE_BG = "white";
     private static final String HEADER_BG    = "#F5E8EA";
-
-    // ── Date format for display ───────────────────────────
-    private static final SimpleDateFormat DISPLAY_FMT = new SimpleDateFormat("MMM dd, yyyy hh:mm a");
 
     // ══════════════════════════════════════════════════════
     //  STATE
@@ -109,25 +99,11 @@ public class timelogs_contents {
     private double confirmX;
     private double archAllX;
 
-    private static boolean fontsLoaded = false;
-
-    private static void loadFonts() {
-        if (fontsLoaded) return;
-        String[] variants = {
-            "Aleo-Black","Aleo-BlackItalic","Aleo-Bold","Aleo-BoldItalic",
-            "Aleo-ExtraBold","Aleo-ExtraBoldItalic","Aleo-ExtraLight","Aleo-ExtraLightItalic",
-            "Aleo-Italic","Aleo-Light","Aleo-LightItalic","Aleo-Medium","Aleo-MediumItalic",
-            "Aleo-Regular","Aleo-SemiBold","Aleo-SemiBoldItalic","Aleo-Thin","Aleo-ThinItalic"
-        };
-        for (String v : variants) Font.loadFont("file:assets/fonts/" + v + ".ttf", 12);
-        fontsLoaded = true;
-    }
-
     public timelogs_contents(double totalW, double totalH, Connection conn) {
         this.totalW = totalW;
         this.totalH = totalH;
         this.conn   = conn;
-        loadFonts();
+        timelogs_util.loadFonts();
     }
 
     // ══════════════════════════════════════════════════════
@@ -135,136 +111,20 @@ public class timelogs_contents {
     // ══════════════════════════════════════════════════════
     public void prependLog(String logId, String employeeId, String employeeName,
                             String timeIn, String timeOut) {
-        String[] newRow = new String[]{
-            logId,
-            employeeId,
-            employeeName != null ? employeeName : "--",
-            timeIn       != null ? timeIn       : "--",
-            timeOut      != null ? timeOut       : "--"
-        };
         if (root != null && currentTab.equals("active")) {
-            cachedRows.add(0, newRow);
+            timelogs_util.prependLog(cachedRows, logId, employeeId, employeeName, timeIn, timeOut);
             rebuildTable();
         }
     }
 
     // ── Filtered rows based on searchQuery ───────────────
     private List<String[]> getFilteredRows() {
-        if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
-        String q = searchQuery.trim().toLowerCase();
-        List<String[]> filtered = new ArrayList<>();
-        for (String[] row : cachedRows) {
-            if (row[2].toLowerCase().contains(q) || row[1].toLowerCase().contains(q))
-                filtered.add(row);
-        }
-        return filtered;
-    }
-
-    // ══════════════════════════════════════════════════════
-    //  DB OPERATIONS
-    // ══════════════════════════════════════════════════════
-    private List<String[]> fetchLogs(String tab) {
-        List<String[]> rows = new ArrayList<>();
-        if (conn == null) return rows;
-        try { if (conn.isClosed()) return rows; } catch (Exception e) { return rows; }
-        String sql =
-            "SELECT t.log_id, t.employee_id, " +
-            "       COALESCE(e.employee_name, t.employee_name) AS employee_name, " +
-            "       t.time_in, t.time_out " +
-            "FROM dbo.TimeLogs t " +
-            "LEFT JOIN dbo.Employees e ON e.employee_id = t.employee_id " +
-            "WHERE t.is_deleted = 0 AND t.status = ? " +
-            "ORDER BY t.time_in DESC";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, tab);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                Timestamp timeIn  = rs.getTimestamp("time_in");
-                Timestamp timeOut = rs.getTimestamp("time_out");
-                rows.add(new String[]{
-                    rs.getString("log_id")        != null ? rs.getString("log_id")        : "—",
-                    rs.getString("employee_id")   != null ? rs.getString("employee_id")   : "—",
-                    rs.getString("employee_name") != null ? rs.getString("employee_name") : "—",
-                    timeIn  != null ? DISPLAY_FMT.format(timeIn)  : "—",
-                    timeOut != null ? DISPLAY_FMT.format(timeOut) : "Still in"
-                });
-            }
-            rs.close();
-        } catch (Exception e) { e.printStackTrace(); }
-        return rows;
-    }
-
-    private void archiveSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.TimeLogs SET status = 'archived' WHERE log_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id);
-                ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void restoreSelected(Set<String> ids) {
-        if (conn == null || ids.isEmpty()) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        for (String id : ids) {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE dbo.TimeLogs SET status = 'active' WHERE log_id = ? AND is_deleted = 0")) {
-                ps.setString(1, id);
-                ps.executeUpdate();
-            } catch (Exception e) { e.printStackTrace(); }
-        }
-    }
-
-    private void hardDeleteAll() {
-        if (conn == null) return;
-        try { if (conn.isClosed()) return; } catch (Exception e) { return; }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM dbo.TimeLogs WHERE is_deleted = 0 AND status = ?")) {
-            ps.setString(1, currentTab);
-            ps.executeUpdate();
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private void exportCsv() {
-        if (cachedRows.isEmpty()) return;
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("Save Time Logs as CSV");
-        chooser.setInitialFileName("timelogs_" + currentTab + ".csv");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
-        Stage stage = null;
-        try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
-        File file = (stage != null) ? chooser.showSaveDialog(stage) : chooser.showSaveDialog(null);
-        if (file == null) return;
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Log ID,Employee ID,Employee Name,Time In,Time Out");
-            writer.newLine();
-            for (String[] row : cachedRows) {
-                writer.write(escapeCsv(row[0])+","+escapeCsv(row[1])+","+escapeCsv(row[2])+","+escapeCsv(row[3])+","+escapeCsv(row[4]));
-                writer.newLine();
-            }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private String escapeCsv(String value) {
-        if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        return value;
+        return timelogs_util.getFilteredRows(cachedRows, searchQuery);
     }
 
     // ══════════════════════════════════════════════════════
     //  SEARCH BAR REPOSITIONING
     // ══════════════════════════════════════════════════════
-    /**
-     * Recalculates and sets the search bar X position based on whether
-     * archiveMode is active (Archive All + Confirm buttons visible) or not.
-     *
-     * When archiveMode is OFF  → right edge of search bar = left edge of activeTab - gap
-     * When archiveMode is ON   → right edge of search bar = left edge of archiveAll - gap
-     */
     private void repositionSearchBar() {
         if (searchBar == null) return;
         double rightAnchor = archiveMode ? archAllX : activeTabX;
@@ -331,7 +191,6 @@ public class timelogs_contents {
         confirmX     = activeTabX   - gap - confirmW;
         archAllX     = confirmX     - gap - archAllW;
 
-        // Initial search bar position (archiveMode = false)
         double initialSearchX = activeTabX - gap - searchW;
 
         // ── Delete button ─────────────────────────────────
@@ -351,7 +210,12 @@ public class timelogs_contents {
             stackRoot.getChildren().add(buildConfirmModal(
                 "Time Logs (" + currentTab + ")",
                 "This will permanently remove all time logs in this view.\nThis action cannot be undone.",
-                () -> { hardDeleteAll(); cachedRows.clear(); selectedIds.clear(); rebuildTable(); }
+                () -> {
+                    timelogs_util.hardDeleteAll(conn, currentTab);
+                    cachedRows.clear();
+                    selectedIds.clear();
+                    rebuildTable();
+                }
             ))
         );
 
@@ -369,7 +233,11 @@ public class timelogs_contents {
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
-        exportCsvBtn.setOnMouseClicked(e -> exportCsv());
+        exportCsvBtn.setOnMouseClicked(e -> {
+            Stage stage = null;
+            try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
+            timelogs_util.exportCsv(cachedRows, currentTab, stage);
+        });
 
         // ── Active / Archived tab buttons ─────────────────
         activeTabBtn   = buildTabLabel("Active",   true);
@@ -412,14 +280,14 @@ public class timelogs_contents {
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
-            if (currentTab.equals("active")) archiveSelected(selectedIds);
-            else                             restoreSelected(selectedIds);
+            if (currentTab.equals("active")) timelogs_util.archiveSelected(conn, selectedIds);
+            else                             timelogs_util.restoreSelected(conn, selectedIds);
             selectedIds.clear(); archiveMode = false;
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false); confirmBtn.setVisible(false);
             archiveBtn.setStyle(archiveBtnStyle(false));
             repositionSearchBar();
-            cachedRows = fetchLogs(currentTab);
+            cachedRows = timelogs_util.fetchLogs(conn, currentTab);
             rebuildTable();
         });
 
@@ -465,7 +333,7 @@ public class timelogs_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        cachedRows  = fetchLogs("active");
+        cachedRows  = timelogs_util.fetchLogs(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
         root.getChildren().addAll(
@@ -513,7 +381,7 @@ public class timelogs_contents {
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
         repositionSearchBar();
-        cachedRows = fetchLogs(tab);
+        cachedRows = timelogs_util.fetchLogs(conn, tab);
         rebuildTable();
     }
 

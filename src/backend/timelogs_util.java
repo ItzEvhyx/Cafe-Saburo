@@ -154,6 +154,8 @@ public class timelogs_util {
     // ══════════════════════════════════════════════════════
     /**
      * Opens a save dialog and writes the cached rows to a CSV file.
+     * Date/time columns (indices 3 and 4) are prefixed with a tab character
+     * so Excel treats them as plain text and never renders them as ########.
      *
      * @param cachedRows  The rows currently displayed in the table.
      * @param currentTab  Used to build the suggested file name.
@@ -177,21 +179,38 @@ public class timelogs_util {
             writer.newLine();
             for (String[] row : cachedRows) {
                 writer.write(
-                    escapeCsv(row[0]) + "," +
-                    escapeCsv(row[1]) + "," +
-                    escapeCsv(row[2]) + "," +
-                    escapeCsv(row[3]) + "," +
-                    escapeCsv(row[4])
+                    escapeCsv(row[0])         + "," +
+                    escapeCsv(row[1])         + "," +
+                    escapeCsv(row[2])         + "," +
+                    escapeCsvDate(row[3])     + "," +
+                    escapeCsvDate(row[4])
                 );
                 writer.newLine();
             }
         } catch (Exception e) { e.printStackTrace(); }
     }
 
+    /**
+     * Standard CSV escaping for non-date fields.
+     */
     public static String escapeCsv(String value) {
         if (value == null) return "";
         if (value.contains(",") || value.contains("\"") || value.contains("\n"))
             return "\"" + value.replace("\"", "\"\"") + "\"";
         return value;
+    }
+
+    /**
+     * CSV escaping for date/time fields.
+     * Wraps the value in quotes and prepends a tab character (\t) so that
+     * Excel interprets the cell as plain text rather than a date — preventing
+     * the "########" display caused by auto-detected date columns being too narrow.
+     * Other spreadsheet tools (LibreOffice Calc, Google Sheets) ignore the tab
+     * and display the text normally.
+     */
+    public static String escapeCsvDate(String value) {
+        if (value == null || value.isBlank()) return "";
+        // The leading \t signals Excel to treat this as text, not a date value.
+        return "\"\t" + value.replace("\"", "\"\"") + "\"";
     }
 }

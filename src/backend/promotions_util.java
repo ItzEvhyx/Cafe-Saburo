@@ -297,6 +297,8 @@ public class promotions_util {
     /**
      * Builds a CSV string from the provided rows.
      * Columns: Promo ID, Promo Name, Discount Type, Start Date, End Date.
+     * Date columns (Start Date, End Date) are prefixed with a tab character
+     * so Excel treats them as plain text and never renders them as ########.
      *
      * @param rows the rows to serialise (typically cachedRows or a filtered subset)
      * @return CSV text with a header line; empty string if rows is null or empty
@@ -306,14 +308,38 @@ public class promotions_util {
         StringBuilder sb = new StringBuilder(
             "Promo ID,Promo Name,Discount Type,Start Date,End Date\n");
         for (String[] row : rows) {
-            for (int i = 0; i < row.length; i++) {
-                if (i > 0) sb.append(',');
-                String cell = row[i] != null ? row[i] : "";
-                sb.append('"').append(cell.replace("\"", "\"\"")).append('"');
-            }
-            sb.append('\n');
+            sb.append(escapeCsv(row[0])).append(',')
+              .append(escapeCsv(row[1])).append(',')
+              .append(escapeCsv(row[2])).append(',')
+              .append(escapeCsvDate(row[3])).append(',')
+              .append(escapeCsvDate(row[4])).append('\n');
         }
         return sb.toString();
+    }
+
+    /**
+     * Standard CSV escaping for non-date fields.
+     * Wraps values containing commas, quotes, or newlines in double-quotes.
+     */
+    public String escapeCsv(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        return value;
+    }
+
+    /**
+     * CSV escaping for date fields.
+     * Wraps the value in quotes and prepends a tab character (\t) so that
+     * Excel interprets the cell as plain text rather than a date — preventing
+     * the "########" display caused by auto-detected date columns being too narrow.
+     * Other spreadsheet tools (LibreOffice Calc, Google Sheets) ignore the tab
+     * and display the text normally.
+     */
+    public String escapeCsvDate(String value) {
+        if (value == null || value.isBlank()) return "";
+        // The leading \t signals Excel to treat this as text, not a date value.
+        return "\"\t" + value.replace("\"", "\"\"") + "\"";
     }
 
     // ══════════════════════════════════════════════════════

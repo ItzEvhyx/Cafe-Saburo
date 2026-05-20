@@ -10,6 +10,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextFormatter;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.FlowPane;
@@ -28,6 +29,8 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
+import java.util.regex.Pattern;
 
 public class menu_contents {
 
@@ -46,6 +49,8 @@ public class menu_contents {
     private static final String GREEN       = "#28A745";
     private static final String GREEN_DARK  = "#1E7E34";
     private static final String FONT_FAMILY = "Aleo";
+
+    private static final Pattern DECIMAL_PATTERN = Pattern.compile("\\d*\\.?\\d*");
 
     private static final String CARD_STYLE_NORMAL =
         "-fx-background-color: white;" +
@@ -72,6 +77,8 @@ public class menu_contents {
     private Label            amountErrorLabel;
     private Label            paymentErrorLabel;
     private StackPane        rootStack;
+    private Button           submitBtn;
+    private Label            submitTooltip;   // tooltip shown when submit is disabled
 
     private Consumer<SubmitResult> onOrderSubmitted;
 
@@ -389,6 +396,7 @@ public class menu_contents {
         VBox.setMargin(customerNameField, new Insets(0, 0, 2, 0));
         customerNameField.textProperty().addListener((obs, o, n) -> {
             if (!n.isBlank()) clearError(nameErrorLabel, customerNameField, false);
+            refreshSubmitBtn();
         });
 
         nameErrorLabel = buildErrorLabel();
@@ -425,22 +433,97 @@ public class menu_contents {
         VBox bottomBlock = buildBottomBlock();
         VBox.setMargin(bottomBlock, new Insets(0, 0, 8, 0));
 
-        Button submitBtn = buildActionBtn("Submit Order", FontAwesomeSolid.CHECK_CIRCLE, true);
-        Button deleteBtn = buildActionBtn("Delete Order",  FontAwesomeSolid.TRASH_ALT,   false);
+        submitBtn = buildActionBtn("Submit Order", FontAwesomeSolid.CHECK_CIRCLE, true);
+        Button deleteBtn = buildActionBtn("Delete Order", FontAwesomeSolid.TRASH_ALT, false);
 
         submitBtn.setOnMouseClicked(e -> onSubmitOrder());
         deleteBtn.setOnMouseClicked(e -> onDeleteOrder());
 
-        VBox.setMargin(submitBtn, new Insets(0, 0, 4, 0));
-        VBox.setMargin(deleteBtn, new Insets(0, 0, 8, 0));
+        // ── Tooltip shown above the Submit button when it is disabled ─────────
+        //
+        // JavaFX disabled nodes consume NO mouse events — setOnMouseEntered on
+        // the Button itself never fires while isDisable()==true.
+        // Fix: wrap the button in a transparent StackPane that always receives
+        // mouse events, and put the hover logic on the wrapper instead.
+        //
+        submitTooltip = new Label("Please Perform a Valid Transaction First");
+        submitTooltip.setWrapText(true);
+        submitTooltip.setMaxWidth(SIDE_PANEL_W - 26);
+        submitTooltip.setAlignment(Pos.CENTER);
+        submitTooltip.setStyle(
+            "-fx-background-color: #3B1015;" +
+            "-fx-background-radius: 8;" +
+            "-fx-text-fill: #FFE0E3;" +
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 12px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-padding: 8 12 8 12;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 10, 0, 0, 3);"
+        );
+        submitTooltip.setVisible(false);
+        submitTooltip.setManaged(false);
+
+        // Transparent wrapper — receives mouse events even when submitBtn is disabled
+        StackPane submitWrapper = new StackPane(submitBtn);
+        submitWrapper.setMaxWidth(Double.MAX_VALUE);
+        submitWrapper.setStyle("-fx-background-color: transparent;");
+        submitWrapper.setOnMouseEntered(e -> {
+            if (submitBtn.isDisabled()) {
+                submitTooltip.setVisible(true);
+                submitTooltip.setManaged(true);
+            }
+        });
+        submitWrapper.setOnMouseExited(e -> {
+            submitTooltip.setVisible(false);
+            submitTooltip.setManaged(false);
+        });
+        // ─────────────────────────────────────────────────────────────────────
+
+        VBox.setMargin(submitTooltip,  new Insets(0, 0, 4, 0));
+        VBox.setMargin(submitWrapper,  new Insets(0, 0, 4, 0));
+        VBox.setMargin(deleteBtn,      new Insets(0, 0, 8, 0));
 
         overlay.getChildren().addAll(
             title, customerNameField, nameErrorLabel,
-            itemsCard, bottomBlock, submitBtn, deleteBtn
+            itemsCard, bottomBlock, submitTooltip, submitWrapper, deleteBtn
         );
 
         refreshOrderList();
         return overlay;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  SUBMIT BUTTON GUARD
+    // ══════════════════════════════════════════════════════
+    private void refreshSubmitBtn() {
+        if (submitBtn == null) return;
+
+        boolean nameOk    = customerNameField != null
+                            && !customerNameField.getText().trim().isBlank();
+        boolean hasOrders = !util.isEmpty();
+        boolean amountOk  = false;
+        if (amountPaidField != null) {
+            String raw = amountPaidField.getText().trim();
+            if (!raw.isBlank()) {
+                try {
+                    double v = Double.parseDouble(raw);
+                    amountOk = v > 0;
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        boolean paymentOk = paymentCombo != null
+                            && paymentCombo.getValue() != null
+                            && !paymentCombo.getValue().isBlank();
+
+        boolean canSubmit = nameOk && hasOrders && amountOk && paymentOk;
+        submitBtn.setDisable(!canSubmit);
+        submitBtn.setStyle(actionBtnStyle(false, true, !canSubmit));
+
+        // Hide tooltip immediately whenever the button becomes enabled
+        if (canSubmit && submitTooltip != null) {
+            submitTooltip.setVisible(false);
+            submitTooltip.setManaged(false);
+        }
     }
 
     private VBox buildBottomBlock() {
@@ -483,10 +566,20 @@ public class menu_contents {
         amountPaidField.setPromptText("₱ Amount paid");
         amountPaidField.setMaxWidth(Double.MAX_VALUE);
         amountPaidField.setStyle(inputStyle(false));
+
+        UnaryOperator<TextFormatter.Change> decimalFilter = change -> {
+            String newText = change.getControlNewText();
+            if (newText.isEmpty() || DECIMAL_PATTERN.matcher(newText).matches()) {
+                return change;
+            }
+            return null;
+        };
+        amountPaidField.setTextFormatter(new TextFormatter<>(decimalFilter));
+
         amountPaidField.textProperty().addListener((obs, o, n) -> {
             refreshChange();
-            String raw = n.trim().replace("₱", "");
-            if (!raw.isBlank()) clearError(amountErrorLabel, amountPaidField, false);
+            if (!n.isBlank()) clearError(amountErrorLabel, amountPaidField, false);
+            refreshSubmitBtn();
         });
         VBox.setMargin(amountPaidField, new Insets(2, 0, 2, 0));
 
@@ -527,6 +620,7 @@ public class menu_contents {
                 clearError(paymentErrorLabel, null, true);
                 paymentCombo.setStyle(comboStyle(false));
             }
+            refreshSubmitBtn();
         });
         VBox.setMargin(paymentCombo, new Insets(2, 0, 2, 0));
 
@@ -557,7 +651,7 @@ public class menu_contents {
             hasError = true;
         }
 
-        String rawPaid = amountPaidField.getText().trim().replace("₱", "");
+        String rawPaid = amountPaidField.getText().trim();
         double paid    = 0;
         if (rawPaid.isBlank()) {
             showError(amountErrorLabel, amountPaidField, "Amount paid is required.", false);
@@ -610,6 +704,7 @@ public class menu_contents {
         hideError(amountErrorLabel);
         hideError(paymentErrorLabel);
         refreshOrderList();
+        refreshSubmitBtn();
     }
 
     // ══════════════════════════════════════════════════════
@@ -704,7 +799,7 @@ public class menu_contents {
         footer.setAlignment(Pos.CENTER_RIGHT);
         footer.setPadding(new Insets(18, 28, 24, 28));
 
-        Label okBtn = new Label("OK, I'll update the amount");
+        Label okBtn = new Label("Update Amount");
         okBtn.setCursor(javafx.scene.Cursor.HAND);
         okBtn.setPrefWidth(200);
         okBtn.setPrefHeight(38);
@@ -791,6 +886,7 @@ public class menu_contents {
             );
             orderListBox.getChildren().add(empty);
             updateAmountLabel();
+            refreshSubmitBtn();
             return;
         }
 
@@ -857,6 +953,7 @@ public class menu_contents {
 
         updateAmountLabel();
         refreshChange();
+        refreshSubmitBtn();
     }
 
     private void updateAmountLabel() {
@@ -865,7 +962,7 @@ public class menu_contents {
 
     private void refreshChange() {
         String raw = amountPaidField != null
-            ? amountPaidField.getText().trim().replace("₱", "")
+            ? amountPaidField.getText().trim()
             : "";
         try {
             double paid   = raw.isEmpty() ? 0 : Double.parseDouble(raw);
@@ -934,8 +1031,7 @@ public class menu_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  MENU CARD  — loads real image from imagePath,
-    //              falls back to camera placeholder on error
+    //  MENU CARD
     // ══════════════════════════════════════════════════════
     private VBox buildMenuCard(String name, String priceS, String priceL,
                                 boolean hasCupSize, String imagePath) {
@@ -945,10 +1041,8 @@ public class menu_contents {
         card.setStyle(CARD_STYLE_NORMAL);
         card.setCursor(javafx.scene.Cursor.HAND);
 
-        // ── Image area ────────────────────────────────────
         StackPane imgArea = buildCardImageArea(imagePath);
 
-        // ── Info ──────────────────────────────────────────
         VBox info = new VBox(4);
         info.setPadding(new Insets(10, 12, 6, 12));
 
@@ -1023,13 +1117,7 @@ public class menu_contents {
         return card;
     }
 
-    /**
-     * Builds the top image area of a menu card.
-     * Tries to load the image from imagePath; if the file doesn't exist
-     * or the load fails, falls back to the camera-icon placeholder.
-     */
     private StackPane buildCardImageArea(String imagePath) {
-        // Rounded-top background (always present, acts as frame/fallback)
         Region bgRegion = new Region();
         bgRegion.setPrefWidth(CARD_W);
         bgRegion.setMinHeight(CARD_IMG_H);
@@ -1054,14 +1142,13 @@ public class menu_contents {
                 if (f.exists()) {
                     Image img = new Image(f.toURI().toString(),
                                          CARD_W, CARD_IMG_H,
-                                         false,   // preserve ratio — false so it fills the area
-                                         true);    // smooth
+                                         false,
+                                         true);
                     if (!img.isError()) {
                         ImageView iv = new ImageView(img);
                         iv.setFitWidth(CARD_W);
                         iv.setFitHeight(CARD_IMG_H);
                         iv.setPreserveRatio(false);
-                        // Clip to rounded corners matching the card top
                         javafx.scene.shape.Rectangle clip =
                             new javafx.scene.shape.Rectangle(CARD_W, CARD_IMG_H);
                         clip.setArcWidth(28);
@@ -1072,13 +1159,11 @@ public class menu_contents {
                     }
                 }
             } catch (Exception ex) {
-                // fall through to placeholder
                 System.err.println("[menu_contents] Could not load image: " + imagePath + " — " + ex.getMessage());
             }
         }
 
         if (!loaded) {
-            // Camera placeholder (same as original)
             FontIcon camIcon = new FontIcon(FontAwesomeSolid.CAMERA);
             camIcon.setIconSize(28);
             camIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
@@ -1167,24 +1252,39 @@ public class menu_contents {
         btn.setGraphic(icon);
         btn.setGraphicTextGap(8);
         btn.setMaxWidth(Double.MAX_VALUE);
-        btn.setStyle(actionBtnStyle(false, isSubmit));
-        btn.setOnMouseEntered(e -> btn.setStyle(actionBtnStyle(true,  isSubmit)));
-        btn.setOnMouseExited(e  -> btn.setStyle(actionBtnStyle(false, isSubmit)));
+        boolean startDisabled = isSubmit;
+        btn.setDisable(startDisabled);
+        btn.setStyle(actionBtnStyle(false, isSubmit, startDisabled));
+        if (!isSubmit) {
+            btn.setOnMouseEntered(e -> btn.setStyle(actionBtnStyle(true,  false, false)));
+            btn.setOnMouseExited(e  -> btn.setStyle(actionBtnStyle(false, false, false)));
+        }
         return btn;
     }
 
-    private String actionBtnStyle(boolean hovered, boolean isSubmit) {
-        String bg = isSubmit
-            ? (hovered ? GREEN_DARK : GREEN)
-            : (hovered ? ACCENT_DARK : ACCENT);
+    private String actionBtnStyle(boolean hovered, boolean isSubmit, boolean disabled) {
+        String bg;
+        if (disabled) {
+            bg = isSubmit ? "#A8D5B5" : ACCENT;
+        } else {
+            bg = isSubmit
+                ? (hovered ? GREEN_DARK : GREEN)
+                : (hovered ? ACCENT_DARK : ACCENT);
+        }
+        String cursor = disabled ? "default" : "hand";
         return "-fx-font-family: '" + FONT_FAMILY + "';" +
                "-fx-font-size: 15px;" +
                "-fx-font-weight: bold;" +
-               "-fx-text-fill: white;" +
+               "-fx-text-fill: " + (disabled ? "#EEEEEE" : "white") + ";" +
                "-fx-background-color: " + bg + ";" +
                "-fx-background-radius: 22;" +
-               "-fx-cursor: hand;" +
-               "-fx-padding: 11 14 11 14;";
+               "-fx-cursor: " + cursor + ";" +
+               "-fx-padding: 11 14 11 14;" +
+               "-fx-opacity: " + (disabled ? "0.65" : "1.0") + ";";
+    }
+
+    private String actionBtnStyle(boolean hovered, boolean isSubmit) {
+        return actionBtnStyle(hovered, isSubmit, false);
     }
 
     private String qtyBtnStyle() {

@@ -10,8 +10,11 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.StringJoiner;
 
 /**
  * suppliers_util
@@ -21,10 +24,31 @@ import java.util.Set;
  *
  * suppliers_contents (UI) delegates every non-visual concern here.
  *
- * NOTE ON NORMALIZATION:
- *  fetchSuppliers now returns ONE ROW PER INGREDIENT — not one row per supplier.
- *  This makes the in-memory data 1NF / 2NF / 3NF compliant at the display layer.
+ * KEY FIX (dynamic-add ingredient display):
+ *  Supplier_Ingredients has a composite PK of (supplier_id, ingredient_id)
+ *  and also carries inventory_id.  The old insertIngredientLinks() only
+ *  knew the inventory_id, so the ingredient_id column was never populated,
+ *  causing the fetchSuppliers JOIN to return NULL → "—" for every newly
+ *  added supplier.
  *
+ *  The fix:
+ *   • insertIngredientLinks() now accepts a Map<String,String>
+ *     { inventory_id → ingredient_id } instead of a bare List<String>.
+ *   • replaceIngredientLinks() mirrors the same signature change.
+ *   • insertSupplier() builds that map from the inventory list passed in
+ *     by the UI (suppliers_contents already fetches ingredient_id via
+ *     inventory_util.fetchAllActive()).
+ *   • The public helper insertIngredientLink(conn, supplierId, inventoryId, ingredientId)
+ *     is added for single-row callers.
+ *
+ * CSV EXPORT FIX:
+ *  exportCsv() now accepts the already-fetched cachedRows list directly
+ *  instead of re-querying dbo.vw_Suppliers (which may not exist).
+ *  Multiple ingredient rows for the same supplier are collapsed into a
+ *  single CSV row with ingredients joined by " | ".
+ *
+ * NOTE ON NORMALIZATION:
+ *  fetchSuppliers returns ONE ROW PER INGREDIENT — not one row per supplier.
  *  Each String[6] row contains:
  *    [0] supplier_id
  *    [1] supplier_name
@@ -33,13 +57,7 @@ import java.util.Set;
  *    [4] address
  *    [5] inventory_id        ← kept for junction-table operations
  *
- *  The view (vw_Suppliers with STRING_AGG) is still used only for CSV export
- *  so the exported file stays human-readable.
- *
- * CHANGE LOG:
- *  - fetchSuppliers: fixed i.ingredient → JOIN dbo.Ingredients + ing.ingredient_name
- *  - fetchIngredientLinks: fixed ORDER BY i.ingredient → JOIN dbo.Ingredients + ing.ingredient_name
- *  - All other methods: unchanged.
+ *  The view (vw_Suppliers with STRING_AGG) is no longer required.
  */
 public class suppliers_util {
 
@@ -81,14 +99,6 @@ public class suppliers_util {
         List<String[]> rows = new ArrayList<>();
         if (!isConnUsable(conn, "fetchSuppliers")) return rows;
 
-        // FIX: dbo.Inventory no longer has 'ingredient' column.
-        // Added JOIN dbo.Ingredients to resolve ingredient_name from ingredient_id.
-        // Old:  LEFT JOIN dbo.Inventory i ON i.inventory_id = si.inventory_id ...
-        //       ISNULL(i.ingredient, N'—') AS ingredient
-        //       ORDER BY ... i.ingredient ASC
-        // New:  also LEFT JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id ...
-        //       ISNULL(ing.ingredient_name, N'—') AS ingredient_name
-        //       ORDER BY ... ing.ingredient_name ASC
         String sql =
             "SELECT " +
             "    s.supplier_id, " +
@@ -101,7 +111,7 @@ public class suppliers_util {
             "LEFT JOIN  dbo.Supplier_Ingredients si  ON si.supplier_id   = s.supplier_id " +
             "LEFT JOIN  dbo.Inventory            inv ON inv.inventory_id  = si.inventory_id " +
             "                                       AND inv.is_deleted   = 0 " +
-            "LEFT JOIN  dbo.Ingredients          ing ON ing.ingredient_id = inv.ingredient_id " +
+            "LEFT JOIN  dbo.Ingredients          ing ON ing.ingredient_id = si.ingredient_id " +
             "                                       AND ing.is_deleted   = 0 " +
             "WHERE s.is_deleted = 0 " +
             "  AND s.[status]   = ? " +
@@ -123,7 +133,8 @@ public class suppliers_util {
                     });
                     count++;
                 }
-                System.out.println("[suppliers_util] fetchSuppliers: loaded " + count + " ingredient-row(s) for tab='" + tab + "'");
+                System.out.println("[suppliers_util] fetchSuppliers: loaded " + count
+                    + " ingredient-row(s) for tab='" + tab + "'");
             }
         } catch (Exception e) {
             System.err.println("[suppliers_util] fetchSuppliers ERROR: " + e.getMessage());
@@ -145,18 +156,11 @@ public class suppliers_util {
         List<String> ids = new ArrayList<>();
         if (!isConnUsable(conn, "fetchIngredientLinks")) return ids;
 
-        // FIX: was "ORDER BY i.ingredient ASC" — i.ingredient column no longer exists.
-        // Added JOIN dbo.Ingredients so we can ORDER BY ing.ingredient_name.
-        // Old:  JOIN dbo.Inventory i ON i.inventory_id = si.inventory_id AND i.is_deleted = 0
-        //       ORDER BY i.ingredient ASC
-        // New:  JOIN dbo.Inventory inv ...
-        //       JOIN dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id AND ing.is_deleted = 0
-        //       ORDER BY ing.ingredient_name ASC
         String sql =
             "SELECT si.inventory_id " +
             "FROM   dbo.Supplier_Ingredients si " +
             "JOIN   dbo.Inventory   inv ON inv.inventory_id  = si.inventory_id  AND inv.is_deleted = 0 " +
-            "JOIN   dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id AND ing.is_deleted = 0 " +
+            "JOIN   dbo.Ingredients ing ON ing.ingredient_id = si.ingredient_id AND ing.is_deleted = 0 " +
             "WHERE  si.supplier_id = ? " +
             "ORDER  BY ing.ingredient_name ASC";
 
@@ -178,14 +182,20 @@ public class suppliers_util {
 
     /**
      * Inserts a new supplier header row, then links each selected
-     * inventory_id into Supplier_Ingredients.
+     * inventory item into Supplier_Ingredients.
      *
-     * @param inventoryIds  list of inventory_id values chosen in the UI
+     * FIX: now accepts a Map<inventoryId, ingredientId> so that both
+     * columns of the junction table are populated correctly.
+     *
+     * @param invToIngMap  Map of { inventory_id → ingredient_id } for each
+     *                     ingredient the user selected in the UI.
+     *                     Build this from inventory_util.fetchAllActive() rows:
+     *                       row[0] = inventory_id, row[2] = ingredient_id
      * @return the generated supplier_id, or null on failure
      */
     public static String insertSupplier(Connection conn,
                                         String supplierName,
-                                        List<String> inventoryIds,
+                                        Map<String, String> invToIngMap,
                                         String contactInfo,
                                         String address) {
         if (!isConnUsable(conn, "insertSupplier")) return null;
@@ -206,7 +216,7 @@ public class suppliers_util {
 
         if (newId == null) return null;
 
-        // Step 2 — insert header row (no ingredients column)
+        // Step 2 — insert header row
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO dbo.Suppliers (supplier_id, supplier_name, contact_info, address) " +
                 "VALUES (?, ?, ?, ?)")) {
@@ -218,8 +228,8 @@ public class suppliers_util {
             System.out.println("[suppliers_util] insertSupplier: inserted " + newId);
         } catch (Exception e) { e.printStackTrace(); return null; }
 
-        // Step 3 — insert junction rows for each selected ingredient
-        insertIngredientLinks(conn, newId, inventoryIds);
+        // Step 3 — insert junction rows (inventory_id + ingredient_id both required)
+        insertIngredientLinks(conn, newId, invToIngMap);
 
         return newId;
     }
@@ -255,32 +265,64 @@ public class suppliers_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Inserts one junction row per inventory_id.
+     * Inserts one junction row per entry in invToIngMap.
+     * Each entry: key = inventory_id, value = ingredient_id.
      * Silently skips duplicates (PK violation caught and ignored).
+     *
+     * FIX: ingredient_id is now included in the INSERT so the composite PK
+     * (supplier_id, ingredient_id) is fully populated, enabling fetchSuppliers
+     * to JOIN dbo.Ingredients via si.ingredient_id and resolve the name.
      */
     public static void insertIngredientLinks(Connection conn,
                                               String supplierId,
-                                              List<String> inventoryIds) {
-        if (!isConnUsable(conn, "insertIngredientLinks") || inventoryIds == null) return;
-        for (String invId : inventoryIds) {
+                                              Map<String, String> invToIngMap) {
+        if (!isConnUsable(conn, "insertIngredientLinks") || invToIngMap == null) return;
+        for (Map.Entry<String, String> entry : invToIngMap.entrySet()) {
+            String invId = entry.getKey();
+            String ingId = entry.getValue();
             try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO dbo.Supplier_Ingredients (supplier_id, inventory_id) VALUES (?, ?)")) {
+                    "INSERT INTO dbo.Supplier_Ingredients (supplier_id, ingredient_id, inventory_id) " +
+                    "VALUES (?, ?, ?)")) {
                 ps.setString(1, supplierId);
-                ps.setString(2, invId);
+                ps.setString(2, ingId);
+                ps.setString(3, invId);
                 ps.executeUpdate();
             } catch (Exception e) {
-                System.err.println("[suppliers_util] insertIngredientLinks: skipped " + invId + " — " + e.getMessage());
+                System.err.println("[suppliers_util] insertIngredientLinks: skipped inv=" + invId
+                    + " ing=" + ingId + " — " + e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Convenience overload for inserting a single ingredient link.
+     */
+    public static void insertIngredientLink(Connection conn,
+                                             String supplierId,
+                                             String inventoryId,
+                                             String ingredientId) {
+        if (!isConnUsable(conn, "insertIngredientLink")) return;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO dbo.Supplier_Ingredients (supplier_id, ingredient_id, inventory_id) " +
+                "VALUES (?, ?, ?)")) {
+            ps.setString(1, supplierId);
+            ps.setString(2, ingredientId);
+            ps.setString(3, inventoryId);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("[suppliers_util] insertIngredientLink ERROR: " + e.getMessage());
         }
     }
 
     /**
      * Replaces all junction rows for the given supplier in one operation:
      * DELETE existing links, then INSERT the new set.
+     *
+     * FIX: signature now matches insertIngredientLinks() — Map<invId, ingId>.
      */
     public static void replaceIngredientLinks(Connection conn,
                                                String supplierId,
-                                               List<String> inventoryIds) {
+                                               Map<String, String> invToIngMap) {
         if (!isConnUsable(conn, "replaceIngredientLinks")) return;
 
         try (PreparedStatement ps = conn.prepareStatement(
@@ -289,7 +331,7 @@ public class suppliers_util {
             ps.executeUpdate();
         } catch (Exception e) { e.printStackTrace(); return; }
 
-        insertIngredientLinks(conn, supplierId, inventoryIds);
+        insertIngredientLinks(conn, supplierId, invToIngMap);
     }
 
     /**
@@ -361,7 +403,6 @@ public class suppliers_util {
     /**
      * Returns the subset of rows whose supplier_id, supplier_name, or ingredient_name
      * contains the search query (case-insensitive).
-     * Operates on the one-row-per-ingredient list from fetchSuppliers().
      */
     public static List<String[]> getFilteredRows(List<String[]> cachedRows, String searchQuery) {
         if (searchQuery == null || searchQuery.isBlank()) return cachedRows;
@@ -370,46 +411,60 @@ public class suppliers_util {
         for (String[] row : cachedRows) {
             if (row[0].toLowerCase().contains(q) ||   // supplier_id
                 row[1].toLowerCase().contains(q) ||   // supplier_name
-                row[2].toLowerCase().contains(q))     // ingredient_name (single value)
+                row[2].toLowerCase().contains(q))     // ingredient_name
                 filtered.add(row);
         }
         return filtered;
     }
 
     // ══════════════════════════════════════════════════════
-    //  CSV EXPORT  —  uses vw_Suppliers (STRING_AGG) for readability
+    //  CSV EXPORT
     // ══════════════════════════════════════════════════════
 
     /**
      * Opens a save-file dialog and writes supplier data to CSV.
-     * Queries vw_Suppliers so each supplier occupies one CSV row with
-     * all ingredients comma-separated — more useful for a spreadsheet export.
+     *
+     * FIX: No longer queries dbo.vw_Suppliers (which may not exist).
+     * Instead, collapses the already-fetched cachedRows in memory:
+     * multiple ingredient rows for the same supplier are joined into one
+     * CSV row with ingredients separated by " | ".
+     *
+     * Output columns: Supplier ID, Supplier Name, Ingredients, Contact Info, Address
+     *
+     * @param cachedRows  The rows currently held in suppliers_contents
+     *                    (one String[6] per ingredient link).
+     * @param currentTab  Used to build the suggested file name.
+     * @param ownerStage  The JavaFX stage to parent the dialog to (may be null).
      */
-    public static void exportCsv(Connection conn, String currentTab, Stage ownerStage) {
-        if (!isConnUsable(conn, "exportCsv")) return;
+    public static void exportCsv(List<String[]> cachedRows, String currentTab, Stage ownerStage) {
+        if (cachedRows == null || cachedRows.isEmpty()) return;
 
-        List<String[]> exportRows = new ArrayList<>();
-        String sql =
-            "SELECT supplier_id, supplier_name, ingredients, contact_info, address " +
-            "FROM dbo.vw_Suppliers " +
-            "WHERE is_deleted = 0 AND [status] = ? " +
-            "ORDER BY supplier_name ASC";
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setString(1, currentTab);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    exportRows.add(new String[]{
-                        rs.getString("supplier_id"),
-                        rs.getString("supplier_name"),
-                        rs.getString("ingredients"),
-                        rs.getString("contact_info"),
-                        rs.getString("address")
-                    });
+        // Collapse the 1NF rows: one entry per supplier_id, ingredients joined with " | "
+        // LinkedHashMap preserves the order rows were fetched (supplier_name ASC)
+        LinkedHashMap<String, String[]> collapsed = new LinkedHashMap<>();
+        for (String[] row : cachedRows) {
+            String suppId = row[0];
+            String ingName = row[2] != null ? row[2].trim() : "";
+
+            if (!collapsed.containsKey(suppId)) {
+                // First row for this supplier — store a copy
+                collapsed.put(suppId, new String[]{
+                    row[0], // supplier_id
+                    row[1], // supplier_name
+                    ingName.equals("—") ? "" : ingName, // start ingredient list (skip placeholder)
+                    row[3], // contact_info
+                    row[4]  // address
+                });
+            } else if (!ingName.isEmpty() && !ingName.equals("—")) {
+                // Subsequent ingredient row — append to ingredient list
+                String[] existing = collapsed.get(suppId);
+                if (existing[2].isEmpty()) {
+                    existing[2] = ingName;
+                } else {
+                    existing[2] = existing[2] + " | " + ingName;
                 }
             }
-        } catch (Exception e) { e.printStackTrace(); return; }
-
-        if (exportRows.isEmpty()) return;
+        }
 
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Save Suppliers as CSV");
@@ -424,16 +479,31 @@ public class suppliers_util {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
             writer.write("Supplier ID,Supplier Name,Ingredients,Contact Info,Address");
             writer.newLine();
-            for (String[] row : exportRows) {
+            for (String[] row : collapsed.values()) {
                 writer.write(
-                    inventory_util.escapeCsv(row[0]) + "," +
-                    inventory_util.escapeCsv(row[1]) + "," +
-                    inventory_util.escapeCsv(row[2]) + "," +
-                    inventory_util.escapeCsv(row[3]) + "," +
-                    inventory_util.escapeCsv(row[4])
+                    escapeCsv(row[0]) + "," +
+                    escapeCsv(row[1]) + "," +
+                    escapeCsv(row[2]) + "," +
+                    escapeCsv(row[3]) + "," +
+                    escapeCsv(row[4])
                 );
                 writer.newLine();
             }
         } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  CSV HELPERS
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * Standard CSV escaping: wraps in double-quotes if the value contains
+     * a comma, double-quote, or newline. Escapes internal double-quotes by doubling.
+     */
+    public static String escapeCsv(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        return value;
     }
 }

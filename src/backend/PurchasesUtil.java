@@ -26,6 +26,8 @@ import java.util.Set;
  *  - fetchItemsForSupplier: fixed i.ingredient → JOIN dbo.Ingredients + ing.ingredient_name
  *  - updateStatus: when newStatus == "Delivered", also increments dbo.Inventory.quantity
  *    by the purchase's quantity_ordered for the matching inventory_id.
+ *  - exportToCsv: order_date column (index 4) now uses escapeCsvDate() so Excel
+ *    renders the date as plain text instead of "########".
  */
 public class PurchasesUtil {
 
@@ -380,6 +382,11 @@ public class PurchasesUtil {
     /**
      * Writes the given rows to a CSV file.
      *
+     * The Order Date column (index 4) is exported with escapeCsvDate() so that
+     * Excel treats it as plain text and never renders "########".
+     * All other spreadsheet tools (LibreOffice Calc, Google Sheets) display
+     * the value normally.
+     *
      * @param file       destination file (chosen by the user via FileChooser in the UI)
      * @param rows       rows to export
      * @param currentTab used only for a log message
@@ -391,9 +398,12 @@ public class PurchasesUtil {
             writer.newLine();
             for (String[] row : rows) {
                 writer.write(
-                    escapeCsv(row[0]) + "," + escapeCsv(row[1]) + "," +
-                    escapeCsv(row[2]) + "," + escapeCsv(row[3]) + "," +
-                    escapeCsv(row[4]) + "," + escapeCsv(row[5])
+                    escapeCsv(row[0]) + "," +
+                    escapeCsv(row[1]) + "," +
+                    escapeCsv(row[2]) + "," +
+                    escapeCsv(row[3]) + "," +
+                    escapeCsvDate(row[4]) + "," +   // Order Date — plain-text escape prevents ########
+                    escapeCsv(row[5])
                 );
                 writer.newLine();
             }
@@ -412,12 +422,28 @@ public class PurchasesUtil {
     private String nvl(String value) {
         return value != null ? value : "—";
     }
- 
-    /** Escapes a value for CSV output. */
+
+    /**
+     * Standard CSV escaping for non-date fields.
+     * Wraps in double-quotes if the value contains a comma, double-quote, or newline.
+     */
     private String escapeCsv(String v) {
         if (v == null) return "";
         if (v.contains(",") || v.contains("\"") || v.contains("\n"))
             return "\"" + v.replace("\"", "\"\"") + "\"";
         return v;
+    }
+
+    /**
+     * CSV escaping for date fields.
+     * Wraps the value in quotes and prepends a tab character (\t) so that
+     * Excel interprets the cell as plain text rather than a date — preventing
+     * the "########" display caused by auto-detected date columns being too narrow.
+     * Other spreadsheet tools (LibreOffice Calc, Google Sheets) ignore the tab
+     * and display the text normally.
+     */
+    private String escapeCsvDate(String value) {
+        if (value == null || value.isBlank()) return "";
+        return "\"\t" + value.replace("\"", "\"\"") + "\"";
     }
 }

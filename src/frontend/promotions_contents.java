@@ -113,12 +113,6 @@ public class promotions_contents {
     private double confirmW;
     private double csvW;
     private double searchW;
-    private double deleteX;
-    private double exportCsvX;
-    private double archivedTabX;
-    private double activeTabX;
-    private double confirmX;
-    private double archAllX;
 
     private static boolean fontsLoaded = false;
 
@@ -161,22 +155,48 @@ public class promotions_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  SEARCH BAR REPOSITIONING
+    //  REPOSITION ALL RIGHT-SIDE BUTTONS
     // ══════════════════════════════════════════════════════
-    private void repositionSearchBar() {
-        if (searchBar == null) return;
-        double rightAnchor = archiveMode ? archAllX : activeTabX;
-        searchBar.setLayoutX(rightAnchor - gap - searchW);
+    private void repositionRightButtons() {
+        if (deleteBtn == null) return;
+
+        double deleteX = totalW - SIDE_PADDING - iconW;
+        deleteBtn.setLayoutX(deleteX);
+
+        double cursor = deleteX - gap;
+
+        if (!archiveMode) {
+            exportCsvBtn.setLayoutX(cursor - csvW);
+            cursor = cursor - csvW - gap;
+
+            archivedTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            activeTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            searchBar.setLayoutX(cursor - searchW);
+        } else {
+            archivedTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            activeTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            confirmBtn.setLayoutX(cursor - confirmW);
+            cursor = cursor - confirmW - gap;
+
+            archiveAllBtn.setLayoutX(cursor - archAllW);
+            cursor = cursor - archAllW - gap;
+
+            searchBar.setLayoutX(cursor - searchW);
+        }
     }
 
     // ══════════════════════════════════════════════════════
     //  CUSTOM DROPDOWN ENGINE
     // ══════════════════════════════════════════════════════
 
-    /**
-     * Builds a full-size dropdown field (label on top, trigger below).
-     * The trigger HBox is stored under PROP_TRIGGER in the returned VBox's properties.
-     */
     private VBox buildDropdownField(FontAwesomeSolid iconCode, String label) {
         Label fieldLabel = buildFieldLabel(label);
 
@@ -220,7 +240,6 @@ public class promotions_contents {
         VBox wrapper = new VBox(6, fieldLabel, trigger);
         wrapper.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(wrapper, Priority.ALWAYS);
-        // ── FIX: store trigger reference directly so getTrigger() is unambiguous ──
         wrapper.getProperties().put(PROP_TRIGGER, trigger);
         return wrapper;
     }
@@ -236,17 +255,9 @@ public class promotions_contents {
                "-fx-border-color: #CCCCCC;-fx-border-width: 1.5;-fx-border-radius: 10;";
     }
 
-    /**
-     * Returns the HBox trigger for any dropdown VBox, regardless of whether it was
-     * built with buildDropdownField (full layout) or buildMiniDropdownVBox (mini layout).
-     *
-     * Both builders now store the trigger under PROP_TRIGGER, so this is unambiguous
-     * and never throws an IndexOutOfBoundsException.
-     */
     private HBox getTrigger(VBox fieldBox) {
         Object stored = fieldBox.getProperties().get(PROP_TRIGGER);
         if (stored instanceof HBox) return (HBox) stored;
-        // Fallback (should never be needed with the fixed builders):
         javafx.scene.Node first = fieldBox.getChildren().get(0);
         if (first instanceof HBox) return (HBox) first;
         return (HBox) fieldBox.getChildren().get(1);
@@ -379,7 +390,7 @@ public class promotions_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  DATE PICKER WIDGET  (modal — full-size Month + Day)
+    //  DATE PICKER WIDGET
     // ══════════════════════════════════════════════════════
 
     private VBox buildDatePickerField(String label, LocalDate[] minDateRef) {
@@ -420,7 +431,7 @@ public class promotions_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  INLINE DATE EDITOR  (edit-mode table cells)
+    //  INLINE DATE EDITOR
     // ══════════════════════════════════════════════════════
 
     private HBox buildInlineDateEditorCell(String promoId, String currentDateStr,
@@ -478,10 +489,6 @@ public class promotions_contents {
         return cell;
     }
 
-    /**
-     * Builds a compact dropdown VBox for use inside table edit-mode cells.
-     * The trigger HBox is stored under PROP_TRIGGER so getTrigger() works correctly.
-     */
     private VBox buildMiniDropdownVBox(FontAwesomeSolid iconCode, List<String> items,
                                         String promptText, String preselected) {
         FontIcon fi = new FontIcon(iconCode);
@@ -526,13 +533,12 @@ public class promotions_contents {
         VBox wrapper = new VBox(0, trigger);
         wrapper.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(wrapper, Priority.ALWAYS);
-        // ── FIX: store trigger reference directly so getTrigger() is unambiguous ──
         wrapper.getProperties().put(PROP_TRIGGER, trigger);
         return wrapper;
     }
 
     // ══════════════════════════════════════════════════════
-    //  INLINE TEXT EDITOR  (edit-mode table cells)
+    //  INLINE TEXT EDITOR
     // ══════════════════════════════════════════════════════
 
     private HBox buildInlineTextEditorCell(String promoId, String current,
@@ -882,16 +888,6 @@ public class promotions_contents {
         titleRow.setLayoutX(SIDE_PADDING); titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side controls (right → left) ────────────
-        deleteX      = totalW - SIDE_PADDING - iconW;
-        exportCsvX   = deleteX      - gap - csvW;
-        archivedTabX = exportCsvX   - gap - tabW;
-        activeTabX   = archivedTabX - gap - tabW;
-        confirmX     = activeTabX   - gap - confirmW;
-        archAllX     = confirmX     - gap - archAllW;
-
-        double initialSearchX = activeTabX - gap - searchW;
-
         // ── Delete button ─────────────────────────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
@@ -900,7 +896,7 @@ public class promotions_contents {
         deleteBtn.setGraphic(trashIcon);
         deleteBtn.setCursor(javafx.scene.Cursor.HAND);
         deleteBtn.setStyle(deleteBtnStyle(false));
-        deleteBtn.setLayoutX(deleteX); deleteBtn.setLayoutY(btnY);
+        deleteBtn.setLayoutY(btnY);
         deleteBtn.setPrefHeight(btnH); deleteBtn.setPrefWidth(iconW);
         deleteBtn.setAlignment(Pos.CENTER);
         deleteBtn.setOnMouseEntered(e -> deleteBtn.setStyle(deleteBtnStyle(true)));
@@ -927,8 +923,8 @@ public class promotions_contents {
         exportCsvBtn.setGraphicTextGap(6);
         exportCsvBtn.setCursor(javafx.scene.Cursor.HAND);
         exportCsvBtn.setStyle(exportCsvBtnStyle(false));
-        exportCsvBtn.setLayoutX(exportCsvX); exportCsvBtn.setLayoutY(btnY);
-        exportCsvBtn.setPrefHeight(btnH);    exportCsvBtn.setPrefWidth(csvW);
+        exportCsvBtn.setLayoutY(btnY);
+        exportCsvBtn.setPrefHeight(btnH); exportCsvBtn.setPrefWidth(csvW);
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
@@ -936,10 +932,10 @@ public class promotions_contents {
 
         // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
-        activeTabBtn.setLayoutX(activeTabX); activeTabBtn.setLayoutY(btnY);
+        activeTabBtn.setLayoutY(btnY);
 
         archivedTabBtn = buildTabLabel("Archived", false);
-        archivedTabBtn.setLayoutX(archivedTabX); archivedTabBtn.setLayoutY(btnY);
+        archivedTabBtn.setLayoutY(btnY);
 
         activeTabBtn.setOnMouseEntered(e -> {
             if (!currentTab.equals("active")) activeTabBtn.setStyle(tabBtnHoverStyle());
@@ -955,7 +951,7 @@ public class promotions_contents {
             archivedTabBtn.setStyle(tabBtnStyle(currentTab.equals("archived"))));
         archivedTabBtn.setOnMouseClicked(e -> switchTab("archived"));
 
-        // ── Archive All / Restore All — HIDDEN by default ─
+        // ── Archive All / Restore All ─────────────────────
         archiveAllBtn = new Label("Archive All");
         archiveAllBtn.setCursor(javafx.scene.Cursor.HAND);
         archiveAllBtn.setPrefWidth(archAllW); archiveAllBtn.setPrefHeight(btnH);
@@ -963,7 +959,7 @@ public class promotions_contents {
         archiveAllBtn.setStyle(archiveAllBtnStyle(false));
         archiveAllBtn.setVisible(false);
         archiveAllBtn.setManaged(false);
-        archiveAllBtn.setLayoutX(archAllX); archiveAllBtn.setLayoutY(btnY);
+        archiveAllBtn.setLayoutY(btnY);
         archiveAllBtn.setOnMouseEntered(e -> archiveAllBtn.setStyle(archiveAllBtnStyle(true)));
         archiveAllBtn.setOnMouseExited(e  -> archiveAllBtn.setStyle(archiveAllBtnStyle(false)));
         archiveAllBtn.setOnMouseClicked(e -> {
@@ -972,7 +968,7 @@ public class promotions_contents {
             rebuildTable();
         });
 
-        // ── Confirm — HIDDEN by default ───────────────────
+        // ── Confirm ───────────────────────────────────────
         confirmBtn = new Label("Confirm");
         confirmBtn.setCursor(javafx.scene.Cursor.HAND);
         confirmBtn.setPrefWidth(confirmW); confirmBtn.setPrefHeight(btnH);
@@ -980,7 +976,7 @@ public class promotions_contents {
         confirmBtn.setStyle(confirmBtnStyle(false));
         confirmBtn.setVisible(false);
         confirmBtn.setManaged(false);
-        confirmBtn.setLayoutX(confirmX); confirmBtn.setLayoutY(btnY);
+        confirmBtn.setLayoutY(btnY);
         confirmBtn.setOnMouseEntered(e -> confirmBtn.setStyle(confirmBtnStyle(true)));
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
@@ -991,8 +987,9 @@ public class promotions_contents {
             archiveMode = false;
             updateArchiveBtnIcon();
             setArchiveControlsVisible(false);
+            exportCsvBtn.setVisible(true);
             archiveBtn.setStyle(archiveBtnStyle(false));
-            repositionSearchBar();
+            repositionRightButtons();
             cachedRows = util.fetchPromotions(currentTab);
             rebuildTable();
         });
@@ -1014,7 +1011,7 @@ public class promotions_contents {
         searchBar.setAlignment(Pos.CENTER_LEFT);
         searchBar.setPadding(new Insets(0, 10, 0, 12));
         searchBar.setPrefWidth(searchW); searchBar.setPrefHeight(btnH);
-        searchBar.setLayoutX(initialSearchX); searchBar.setLayoutY(btnY);
+        searchBar.setLayoutY(btnY);
         searchBar.setStyle(
             "-fx-background-color: white;-fx-background-radius: 20;" +
             "-fx-border-color: " + ACCENT + ";-fx-border-width: 1.5;-fx-border-radius: 20;");
@@ -1035,6 +1032,9 @@ public class promotions_contents {
             titleRow, searchBar, archiveAllBtn, confirmBtn,
             activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
         );
+
+        repositionRightButtons();
+
         stackRoot.getChildren().add(root);
         return stackRoot;
     }
@@ -1047,7 +1047,9 @@ public class promotions_contents {
     }
 
     // ══════════════════════════════════════════════════════
-    //  EXPORT CSV  — FIX: robust stage lookup via Window list
+    //  EXPORT CSV
+    //  Delegates to util.buildCsv() so date columns are
+    //  escaped with escapeCsvDate() and never hash in Excel.
     // ══════════════════════════════════════════════════════
     private void exportCsv() {
         List<String[]> rows = util.filterRows(cachedRows, searchQuery);
@@ -1059,64 +1061,33 @@ public class promotions_contents {
         chooser.getExtensionFilters().add(
             new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
 
-        // ── FIX: resolve Stage without relying on root.getScene() being non-null ──
         Stage stage = resolveStage();
-        File file = chooser.showSaveDialog(stage);   // null stage → unowned dialog (still works)
+        File file = chooser.showSaveDialog(stage);
         if (file == null) return;
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Promo ID,Promo Name,Discount Type,Start Date,End Date");
-            writer.newLine();
-            for (String[] row : rows) {
-                writer.write(
-                    escapeCsv(row[0]) + "," +
-                    escapeCsv(row[1]) + "," +
-                    escapeCsv(row[2]) + "," +
-                    escapeCsv(row[3]) + "," +
-                    escapeCsv(row[4])
-                );
-                writer.newLine();
-            }
+            writer.write(util.buildCsv(rows));
         } catch (Exception ex) {
             ex.printStackTrace();
         }
     }
 
-    /**
-     * Resolves the primary Stage for dialog ownership.
-     * Tries root → stackRoot → first visible Stage in Window list.
-     * Returns null if none is found (FileChooser still works without an owner).
-     */
     private Stage resolveStage() {
-        // 1. Try through root's scene (fastest path when already shown)
         try {
             if (root != null && root.getScene() != null
-                    && root.getScene().getWindow() instanceof Stage s) {
-                return s;
-            }
+                    && root.getScene().getWindow() instanceof Stage s) return s;
         } catch (Exception ignored) {}
-
-        // 2. Try through stackRoot
         try {
             if (stackRoot != null && stackRoot.getScene() != null
-                    && stackRoot.getScene().getWindow() instanceof Stage s) {
-                return s;
-            }
+                    && stackRoot.getScene().getWindow() instanceof Stage s) return s;
         } catch (Exception ignored) {}
-
-        // 3. Fall back to the first visible Stage reported by JavaFX
         for (Window w : Stage.getWindows()) {
             if (w instanceof Stage s && w.isShowing()) return s;
         }
         return null;
     }
 
-    private String escapeCsv(String value) {
-        if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n"))
-            return "\"" + value.replace("\"", "\"\"") + "\"";
-        return value;
-    }
+    // ── Local escapeCsv removed — use util.escapeCsv() / util.escapeCsvDate() via buildCsv() ──
 
     // ══════════════════════════════════════════════════════
     //  ARCHIVE MODE TOGGLE
@@ -1127,8 +1098,9 @@ public class promotions_contents {
         updateArchiveBtnIcon();
         archiveAllBtn.setText(currentTab.equals("archived") ? "Restore All" : "Archive All");
         setArchiveControlsVisible(archiveMode);
+        exportCsvBtn.setVisible(!archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
-        repositionSearchBar();
+        repositionRightButtons();
         rebuildTable();
     }
 
@@ -1162,10 +1134,11 @@ public class promotions_contents {
         updateArchiveBtnIcon();
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
         setArchiveControlsVisible(false);
+        exportCsvBtn.setVisible(true);
         archiveBtn.setStyle(archiveBtnStyle(false));
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
-        repositionSearchBar();
+        repositionRightButtons();
         cachedRows = util.fetchPromotions(tab);
         rebuildTable();
     }

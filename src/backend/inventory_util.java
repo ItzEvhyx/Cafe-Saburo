@@ -20,13 +20,20 @@ import java.util.Set;
  * Holds all business logic, database operations, CSV export,
  * font loading, and data-filtering for the Inventory module.
  *
- * SCHEMA CHANGE:
- *  dbo.Inventory no longer has an 'ingredient' VARCHAR column.
- *  Instead it has ingredient_id (FK → dbo.Ingredients).
- *  All queries now JOIN dbo.Ingredients to get ingredient_name.
- *
+ * SCHEMA:
  *  dbo.Inventory columns: inventory_id, ingredient_id, quantity, unit, reorder_level, is_deleted, status
  *  dbo.Ingredients columns: ingredient_id, ingredient_name, price, is_deleted, status
+ *
+ * fetchAllActive returns String[3]:
+ *   [0] inventory_id
+ *   [1] ingredient_name
+ *   [2] ingredient_id
+ *
+ * fetchAllIngredients returns String[2] from dbo.Ingredients directly:
+ *   [0] ingredient_id
+ *   [1] ingredient_name
+ *   Used by the Add Ingredient modal so the user picks from real existing
+ *   ingredients instead of typing a free-text name.
  */
 public class inventory_util {
 
@@ -70,7 +77,7 @@ public class inventory_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  FETCH
+    //  FETCH INVENTORY
     // ══════════════════════════════════════════════════════
 
     /**
@@ -79,14 +86,11 @@ public class inventory_util {
      *
      * Returns rows as String[5]:
      *   { inventory_id, ingredient_name, quantity, unit, reorder_level }
-     *
-     * Joins dbo.Ingredients to resolve ingredient_name from ingredient_id.
      */
     public static List<String[]> fetchInventory(Connection conn, String tab) {
         List<String[]> rows = new ArrayList<>();
         if (!isConnUsable(conn, "fetchInventory")) return rows;
 
-        // JOIN dbo.Ingredients to get ingredient_name — 'ingredient' column no longer exists on Inventory
         String sql =
             "SELECT inv.inventory_id, " +
             "       ISNULL(ing.ingredient_name, N'—') AS ingredient_name, " +
@@ -155,25 +159,28 @@ public class inventory_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  FETCH ALL ACTIVE
+    //  FETCH ALL ACTIVE (from dbo.Inventory)
     //  Used by the Add/Edit Supplier modal to populate the
     //  ingredient checkbox list.
     //
-    //  Returns List<String[2]>:
+    //  Returns List<String[3]>:
     //    [0] inventory_id
-    //    [1] ingredient_name  (from dbo.Ingredients)
+    //    [1] ingredient_name  (display label shown in dropdown)
+    //    [2] ingredient_id    (FK — written to Supplier_Ingredients)
     // ══════════════════════════════════════════════════════
 
     /**
      * Returns every non-deleted active inventory item for use in selector UIs.
-     * Each String[2] contains: { inventory_id, ingredient_name }
+     * Each String[3] contains: { inventory_id, ingredient_name, ingredient_id }
      */
     public static List<String[]> fetchAllActive(Connection conn) {
         List<String[]> rows = new ArrayList<>();
         if (!isConnUsable(conn, "fetchAllActive")) return rows;
 
         String sql =
-            "SELECT inv.inventory_id, ISNULL(ing.ingredient_name, N'—') AS ingredient_name " +
+            "SELECT inv.inventory_id, " +
+            "       ISNULL(ing.ingredient_name, N'—') AS ingredient_name, " +
+            "       inv.ingredient_id " +
             "FROM   dbo.Inventory inv " +
             "JOIN   dbo.Ingredients ing ON ing.ingredient_id = inv.ingredient_id " +
             "                          AND ing.is_deleted = 0 " +
@@ -185,13 +192,61 @@ public class inventory_util {
             while (rs.next()) {
                 String invId  = rs.getString("inventory_id");
                 String ingred = rs.getString("ingredient_name");
+                String ingId  = rs.getString("ingredient_id");
                 if (invId  == null) invId  = "";
                 if (ingred == null) ingred = "—";
-                rows.add(new String[]{ invId, ingred });
+                if (ingId  == null) ingId  = "";
+                rows.add(new String[]{ invId, ingred, ingId });
             }
             System.out.println("[inventory_util] fetchAllActive: loaded " + rows.size() + " active ingredient(s)");
         } catch (Exception e) {
             System.err.println("[inventory_util] fetchAllActive ERROR: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return rows;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  FETCH ALL INGREDIENTS (from dbo.Ingredients directly)
+    //  Used by the Add Ingredient modal in inventory_contents
+    //  so the user selects from real existing ingredients
+    //  instead of typing a free-text name.
+    //
+    //  Returns List<String[2]>:
+    //    [0] ingredient_id
+    //    [1] ingredient_name
+    // ══════════════════════════════════════════════════════
+
+    /**
+     * Fetches all active, non-deleted ingredients from dbo.Ingredients.
+     * Each String[2] contains: { ingredient_id, ingredient_name }
+     *
+     * This is intentionally separate from fetchAllActive() which reads
+     * dbo.Inventory. Use this method when you need the master ingredient
+     * catalogue (e.g. to populate the Add Inventory modal dropdown).
+     */
+    public static List<String[]> fetchAllIngredients(Connection conn) {
+        List<String[]> rows = new ArrayList<>();
+        if (!isConnUsable(conn, "fetchAllIngredients")) return rows;
+
+        String sql =
+            "SELECT ingredient_id, ingredient_name " +
+            "FROM   dbo.Ingredients " +
+            "WHERE  is_deleted = 0 AND [status] = 'active' " +
+            "ORDER  BY ingredient_name ASC";
+
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String ingId   = rs.getString("ingredient_id");
+                String ingName = rs.getString("ingredient_name");
+                if (ingId   == null) ingId   = "";
+                if (ingName == null) ingName = "—";
+                rows.add(new String[]{ ingId, ingName });
+            }
+            System.out.println("[inventory_util] fetchAllIngredients: loaded " + rows.size() + " ingredient(s)");
+        } catch (Exception e) {
+            System.err.println("[inventory_util] fetchAllIngredients ERROR: " + e.getMessage());
             e.printStackTrace();
         }
         return rows;
@@ -203,7 +258,6 @@ public class inventory_util {
 
     /**
      * Updates the quantity and reorder_level for the given inventory_id.
-     * ingredient_id is managed by dbo.Ingredients — not updated here.
      */
     public static void updateIngredient(Connection conn, String inventoryId,
                                         int quantity, int reorderLevel) {
@@ -265,36 +319,35 @@ public class inventory_util {
     // ══════════════════════════════════════════════════════
 
     /**
-     * Inserts a new inventory row, auto-generating the next INV-NNNN id.
-     * Looks up ingredient_id from dbo.Ingredients by ingredient_name.
-     * If the ingredient name doesn't exist in dbo.Ingredients, returns null.
+     * Inserts a new inventory row using the ingredient_id directly.
+     * Auto-generates the next INV-NNNN id.
+     *
+     * This overload accepts ingredient_id directly (used by the modal
+     * dropdown flow where the user selects from dbo.Ingredients).
      *
      * @return the generated inventory_id, or null on failure.
      */
-    public static String insertIngredient(Connection conn, String ingredientName,
-                                          int quantity, String unit, int reorderLevel) {
-        if (!isConnUsable(conn, "insertIngredient")) return null;
+    public static String insertIngredientById(Connection conn, String ingredientId,
+                                               int quantity, String unit, int reorderLevel) {
+        if (!isConnUsable(conn, "insertIngredientById")) return null;
 
-        // Step 1 — resolve ingredient_id from dbo.Ingredients by name
-        String ingredientId = null;
+        // Verify ingredient_id exists and is active
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT ingredient_id FROM dbo.Ingredients " +
-                "WHERE ingredient_name = ? AND is_deleted = 0")) {
-            ps.setString(1, ingredientName);
+                "WHERE ingredient_id = ? AND is_deleted = 0")) {
+            ps.setString(1, ingredientId);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) ingredientId = rs.getString("ingredient_id");
+                if (!rs.next()) {
+                    System.err.println("[inventory_util] insertIngredientById: ingredient_id not found: " + ingredientId);
+                    return null;
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
 
-        if (ingredientId == null) {
-            System.err.println("[inventory_util] insertIngredient: no Ingredients row found for name='" + ingredientName + "'");
-            return null;
-        }
-
-        // Step 2 — generate next INV-NNNN id
+        // Generate next INV-NNNN id
         String newId = null;
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT MAX(CAST(SUBSTRING(inventory_id, 5, LEN(inventory_id)) AS INT)) AS max_num " +
@@ -313,7 +366,7 @@ public class inventory_util {
 
         if (newId == null) return null;
 
-        // Step 3 — insert the inventory row with ingredient_id (not ingredient name)
+        // Insert the inventory row with ingredient_id
         try (PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO dbo.Inventory (inventory_id, ingredient_id, quantity, unit, reorder_level) " +
                 "VALUES (?, ?, ?, ?, ?)")) {
@@ -323,12 +376,45 @@ public class inventory_util {
             ps.setString(4, unit);
             ps.setInt   (5, reorderLevel);
             ps.executeUpdate();
-            System.out.println("[inventory_util] insertIngredient: inserted " + newId + " linked to " + ingredientId);
+            System.out.println("[inventory_util] insertIngredientById: inserted " + newId + " linked to " + ingredientId);
             return newId;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
+    }
+
+    /**
+     * Inserts a new inventory row, auto-generating the next INV-NNNN id.
+     * Looks up ingredient_id from dbo.Ingredients by ingredient_name.
+     * If the ingredient name doesn't exist in dbo.Ingredients, returns null.
+     *
+     * @return the generated inventory_id, or null on failure.
+     */
+    public static String insertIngredient(Connection conn, String ingredientName,
+                                          int quantity, String unit, int reorderLevel) {
+        if (!isConnUsable(conn, "insertIngredient")) return null;
+
+        // Resolve ingredient_id from dbo.Ingredients by name
+        String ingredientId = null;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ingredient_id FROM dbo.Ingredients " +
+                "WHERE ingredient_name = ? AND is_deleted = 0")) {
+            ps.setString(1, ingredientName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) ingredientId = rs.getString("ingredient_id");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+
+        if (ingredientId == null) {
+            System.err.println("[inventory_util] insertIngredient: no Ingredients row found for name='" + ingredientName + "'");
+            return null;
+        }
+
+        return insertIngredientById(conn, ingredientId, quantity, unit, reorderLevel);
     }
 
     // ══════════════════════════════════════════════════════
@@ -343,8 +429,8 @@ public class inventory_util {
         String q = searchQuery.trim().toLowerCase();
         List<String[]> filtered = new ArrayList<>();
         for (String[] row : cachedRows) {
-            if (row[0].toLowerCase().contains(q) ||   // inventory_id
-                row[1].toLowerCase().contains(q))     // ingredient_name
+            if (row[0].toLowerCase().contains(q) ||
+                row[1].toLowerCase().contains(q))
                 filtered.add(row);
         }
         return filtered;

@@ -42,6 +42,22 @@ import java.util.stream.Collectors;
  *   [3] contact_info
  *   [4] address
  *   [5] inventory_id
+ *
+ * KEY FIX (dynamic-add ingredient display):
+ *  inventory_util.fetchAllActive() returns String[] where:
+ *    [0] = inventory_id
+ *    [1] = ingredient_name   (display label)
+ *    [2] = ingredient_id     ← NEW: needed to populate Supplier_Ingredients.ingredient_id
+ *
+ *  When the user saves a new supplier, the UI now builds a
+ *  Map<inventory_id, ingredient_id> and passes it to
+ *  suppliers_util.insertSupplier(), which stores both FKs in the
+ *  junction table.  fetchSuppliers() can then JOIN on si.ingredient_id
+ *  and resolve the ingredient name correctly.
+ *
+ * CSV EXPORT FIX:
+ *  exportCsvBtn now passes cachedRows to suppliers_util.exportCsv() so
+ *  the export works without dbo.vw_Suppliers existing in the database.
  */
 public class suppliers_contents {
 
@@ -154,12 +170,14 @@ public class suppliers_contents {
 
     /**
      * Builds the ingredient multi-select dropdown field.
-     * Returns a VBox containing the label and the trigger HBox.
-     * The trigger's userData holds: String[] { comma-joined selected inv IDs }
-     * The trigger's properties hold:
-     *   "items"       → List<String[]> { [0]=invId, [1]=ingredientName }
+     *
+     * Items stored in trigger.getProperties():
+     *   "items"       → List<String[]> { [0]=invId, [1]=ingredientName, [2]=ingredientId }
      *   "selectedIds" → Set<String> of currently selected inventory_ids
      *   "summaryLabel"→ Label showing the selection summary
+     *
+     * NOTE: item[2] (ingredient_id) is carried through so the save handler
+     * can build the Map<inventoryId, ingredientId> required by insertSupplier().
      */
     private VBox buildIngredientDropdownField(FontAwesomeSolid iconCode, String label) {
         Label fieldLabel = new Label(label);
@@ -227,7 +245,10 @@ public class suppliers_contents {
                "-fx-border-radius: 10;";
     }
 
-    /** Populates the dropdown items (inventory list). */
+    /**
+     * Populates the dropdown items.
+     * Each String[] must be: [0]=inventory_id, [1]=ingredient_name, [2]=ingredient_id
+     */
     @SuppressWarnings("unchecked")
     private void setIngredientDropdownItems(VBox fieldBox, List<String[]> invItems) {
         HBox trigger = (HBox) fieldBox.getChildren().get(1);
@@ -241,6 +262,35 @@ public class suppliers_contents {
     private Set<String> getIngredientDropdownSelected(VBox fieldBox) {
         HBox trigger = (HBox) fieldBox.getChildren().get(1);
         return (Set<String>) trigger.getProperties().get("selectedIds");
+    }
+
+    /**
+     * Builds a Map<inventory_id, ingredient_id> for all currently
+     * selected entries in the dropdown.  This is what insertSupplier()
+     * now requires so both FK columns are written to Supplier_Ingredients.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> getIngredientDropdownSelectionMap(VBox fieldBox) {
+        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
+        Set<String> selectedInvIds = (Set<String>) trigger.getProperties().get("selectedIds");
+
+        Map<String, String> map = new LinkedHashMap<>();
+        for (String[] item : items) {
+            // item[0] = inventory_id, item[1] = ingredient_name, item[2] = ingredient_id
+            if (selectedInvIds.contains(item[0])) {
+                String invId = item[0];
+                // Guard: item[2] may be absent if fetchAllActive doesn't return it
+                String ingId = (item.length > 2 && item[2] != null) ? item[2] : "";
+                if (!ingId.isEmpty()) {
+                    map.put(invId, ingId);
+                } else {
+                    System.err.println("[suppliers_contents] WARNING: ingredient_id missing for "
+                        + "inventory_id=" + invId + " — skipping junction row");
+                }
+            }
+        }
+        return map;
     }
 
     /** Opens the multi-select popup for ingredient selection. */
@@ -304,11 +354,11 @@ public class suppliers_contents {
         };
 
         for (int i = 0; i < items.size(); i++) {
-            String[] inv    = items.get(i);
-            String   invId  = inv[0];
+            String[] inv     = items.get(i);
+            String   invId   = inv[0];
             String   invName = inv[1];
-            boolean  isSel  = selectedInvIds.contains(invId);
-            boolean  isLast = (i == items.size() - 1);
+            boolean  isSel   = selectedInvIds.contains(invId);
+            boolean  isLast  = (i == items.size() - 1);
 
             CheckBox cb = new CheckBox(invName);
             cb.setSelected(isSel);
@@ -335,7 +385,6 @@ public class suppliers_contents {
             });
             row.setOnMouseEntered(e -> row.setStyle(ingredRowStyle(cb.isSelected(), true, rowRadius)));
             row.setOnMouseExited(e  -> row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius)));
-            // clicking the row toggles the checkbox
             row.setOnMouseClicked(e -> {
                 if (e.getTarget() != cb) {
                     cb.setSelected(!cb.isSelected());
@@ -447,7 +496,11 @@ public class suppliers_contents {
         VBox ingredientDropdown = buildIngredientDropdownField(
             FontAwesomeSolid.CARROT, "Ingredients (select one or more)");
 
-        // Populate from inventory
+        // Fetch inventory list.
+        // inventory_util.fetchAllActive() must return String[] where:
+        //   [0] = inventory_id
+        //   [1] = ingredient_name  (display label shown in the dropdown)
+        //   [2] = ingredient_id    (FK needed for Supplier_Ingredients)
         List<String[]> allInventory;
         try {
             allInventory = inventory_util.fetchAllActive(conn);
@@ -459,10 +512,10 @@ public class suppliers_contents {
         }
 
         if (!allInventory.isEmpty()) {
-            // fetchAllActive returns String[] where [0]=inventory_id, [1]=ingredient name
             setIngredientDropdownItems(ingredientDropdown, allInventory);
         }
 
+        // Keep a final reference for the save lambda
         final List<String[]> finalAllInventory = allInventory;
 
         Label errorLbl = new Label("");
@@ -523,8 +576,17 @@ public class suppliers_contents {
                 return;
             }
 
-            List<String> invIdList = new ArrayList<>(selectedInventoryIds);
-            String newId = suppliers_util.insertSupplier(conn, nameVal, invIdList, contactVal, addressVal);
+            // FIX: build Map<inventory_id, ingredient_id> instead of plain List<inventory_id>.
+            // This ensures both FK columns are written to Supplier_Ingredients, so the
+            // JOIN in fetchSuppliers can resolve ingredient_name from si.ingredient_id.
+            Map<String, String> invToIngMap = getIngredientDropdownSelectionMap(ingredientDropdown);
+            if (invToIngMap.isEmpty()) {
+                showError(errorLbl, "⚠  Ingredient data incomplete. Re-select ingredients and try again.");
+                return;
+            }
+
+            String newId = suppliers_util.insertSupplier(
+                conn, nameVal, invToIngMap, contactVal, addressVal);
             if (newId == null) {
                 showError(errorLbl, "⚠  Failed to save. Check connection.");
                 return;
@@ -729,10 +791,11 @@ public class suppliers_contents {
         exportCsvBtn.setAlignment(Pos.CENTER);
         exportCsvBtn.setOnMouseEntered(e -> exportCsvBtn.setStyle(exportCsvBtnStyle(true)));
         exportCsvBtn.setOnMouseExited(e  -> exportCsvBtn.setStyle(exportCsvBtnStyle(false)));
+        // FIX: pass cachedRows directly — no longer depends on dbo.vw_Suppliers
         exportCsvBtn.setOnMouseClicked(e -> {
             Stage stage = null;
             try { stage = (Stage) root.getScene().getWindow(); } catch (Exception ignored) {}
-            suppliers_util.exportCsv(conn, currentTab, stage);
+            suppliers_util.exportCsv(cachedRows, currentTab, stage);
         });
 
         activeTabBtn = buildTabLabel("Active", true);
@@ -1024,8 +1087,8 @@ public class suppliers_contents {
 
             for (int i = 0; i < rows.size(); i++) {
                 String[] item   = rows.get(i);
-                String  suppId  = item[0];
-                boolean isLast  = (i == rows.size() - 1);
+                String   suppId = item[0];
+                boolean  isLast = (i == rows.size() - 1);
 
                 boolean isFirstInGroup = !suppId.equals(prevSuppId);
                 if (isFirstInGroup) {

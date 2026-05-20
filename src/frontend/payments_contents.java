@@ -69,25 +69,12 @@ public class payments_contents {
     private String         currentTab  = "active";
     private boolean        archiveMode = false;
 
-    /**
-     * searchQuery holds the current search string.
-     * When non-blank, payments_util.fetchPaymentsFiltered() is called so that
-     * filtering is performed by the database (usp_GetPayments @search param)
-     * rather than by iterating cachedRows in Java.
-     */
     private String         searchQuery = "";
 
     private Pane           root;
     private StackPane      stackRoot;
     private ScrollPane     tableScroll;
 
-    /**
-     * cachedRows holds the last result set returned by the DB.
-     * When searchQuery is blank this is the full tab dataset.
-     * When searchQuery is set this is already the filtered subset.
-     * Either way, getDisplayRows() returns cachedRows directly — no
-     * second pass in Java is needed.
-     */
     private List<String[]> cachedRows  = new ArrayList<>();
     private Set<String>    selectedIds = new HashSet<>();
 
@@ -102,13 +89,15 @@ public class payments_contents {
     private TextField searchField;
     private HBox      searchBar;
 
-    // ── Layout values needed for repositioning ────────────
+    // ── Button dimension constants (set once in getView) ──
     private double btnY;
     private double gap;
     private double searchW;
-    private double activeTabX;
-    private double archAllX;
-    private double confirmX;
+    private double iconW;
+    private double tabW;
+    private double archAllW;
+    private double confirmW;
+    private double csvW;
 
     private static boolean fontsLoaded = false;
 
@@ -131,12 +120,55 @@ public class payments_contents {
         loadFonts();
     }
 
-    // ── Reposition search bar depending on archiveMode ────
-    private void repositionSearchBar() {
-        if (searchBar == null) return;
-        double rightEdge = archiveMode ? (archAllX - gap) : (activeTabX - gap);
-        double newX = rightEdge - searchW;
-        searchBar.setLayoutX(newX);
+    // ══════════════════════════════════════════════════════
+    //  REPOSITION ALL RIGHT-SIDE BUTTONS
+    //
+    //  Recalculates every button's layoutX from right to left
+    //  based on which buttons are currently visible.
+    //  Normal mode:  delete | csv | archived | active | search
+    //  Archive mode: delete | archived | active | confirm | archiveAll | search
+    // ══════════════════════════════════════════════════════
+    private void repositionRightButtons() {
+        if (deleteBtn == null) return;
+
+        // Delete is always the rightmost fixed button
+        double deleteX = totalW - SIDE_PADDING - iconW;
+        deleteBtn.setLayoutX(deleteX);
+
+        double cursor = deleteX - gap;
+
+        if (!archiveMode) {
+            // Export CSV visible
+            exportCsvBtn.setLayoutX(cursor - csvW);
+            cursor = cursor - csvW - gap;
+
+            archivedTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            activeTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            // search bar sits to the left of the active tab
+            searchBar.setLayoutX(cursor - searchW);
+
+            // archive-mode-only buttons stay hidden — positions don't matter
+        } else {
+            // Export CSV hidden; archived + active tabs shift right
+            archivedTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            activeTabBtn.setLayoutX(cursor - tabW);
+            cursor = cursor - tabW - gap;
+
+            confirmBtn.setLayoutX(cursor - confirmW);
+            cursor = cursor - confirmW - gap;
+
+            archiveAllBtn.setLayoutX(cursor - archAllW);
+            cursor = cursor - archAllW - gap;
+
+            // search bar sits to the left of archive-all
+            searchBar.setLayoutX(cursor - searchW);
+        }
     }
 
     // ══════════════════════════════════════════════════════
@@ -158,12 +190,6 @@ public class payments_contents {
 
     // ══════════════════════════════════════════════════════
     //  DISPLAY ROWS
-    //
-    //  Previously getFilteredRows() iterated cachedRows in Java.
-    //  Now cachedRows is already the correct result — either the full
-    //  tab dataset (searchQuery blank) or the DB-filtered subset
-    //  (searchQuery non-blank, fetched via usp_GetPayments @search).
-    //  This method simply returns the cached list.
     // ══════════════════════════════════════════════════════
     private List<String[]> getDisplayRows() {
         return cachedRows;
@@ -172,12 +198,6 @@ public class payments_contents {
     // ══════════════════════════════════════════════════════
     //  SEARCH — delegates to DB proc
     // ══════════════════════════════════════════════════════
-
-    /**
-     * Called whenever the search field changes.
-     * Fetches a fresh filtered result set from the database and rebuilds the table.
-     * This keeps filtering logic in SQL (usp_GetPayments) rather than Java.
-     */
     private void applySearch(String query) {
         searchQuery = (query == null) ? "" : query.trim();
         selectedIds.clear();
@@ -336,8 +356,6 @@ public class payments_contents {
 
                 resultArea.getChildren().clear();
 
-                // runOperation now dispatches to a CallableStatement calling the
-                // appropriate analytics stored procedure (usp_PaymentSum, etc.)
                 List<String[]> data = payments_util.runOperation(conn, opKey);
 
                 if (data == null || data.size() <= 1) {
@@ -464,16 +482,16 @@ public class payments_contents {
         root.setPrefWidth(totalW);
         root.setPrefHeight(totalH);
 
-        double btnH      = 36;
-        btnY             = TOP_PADDING + 10;
-        double iconW     = 36;
-        gap              = 8;
-        double tabW      = 90;
-        double archAllW  = 100;
-        double confirmW  = 90;
-        double csvW      = 120;
+        double btnH   = 36;
+        btnY          = TOP_PADDING + 10;
+        iconW         = 36;
+        gap           = 8;
+        tabW          = 90;
+        archAllW      = 100;
+        confirmW      = 90;
+        csvW          = 120;
         double analyticsW = 180;
-        searchW           = 200;
+        searchW       = 200;
 
         Label title = new Label("Payment History");
         title.setStyle(
@@ -520,18 +538,7 @@ public class payments_contents {
         titleRow.setLayoutY(TOP_PADDING);
         titleRow.setPrefHeight(HEADER_H);
 
-        // ── Right-side button layout (right → left) ───────
-        double deleteX      = totalW - SIDE_PADDING - iconW;
-        double exportCsvX   = deleteX      - gap - csvW;
-        double archivedTabX = exportCsvX   - gap - tabW;
-        activeTabX          = archivedTabX - gap - tabW;
-        confirmX            = activeTabX   - gap - confirmW;
-        archAllX            = confirmX     - gap - archAllW;
-
-        double searchRightEdge = activeTabX - gap;
-        double searchX         = searchRightEdge - searchW;
-
-        // ── Delete button ─────────────────────────────────
+        // ── Delete button (always rightmost) ─────────────
         deleteBtn = new Label();
         FontIcon trashIcon = new FontIcon(FontAwesomeSolid.TRASH_ALT);
         trashIcon.setIconSize(15);
@@ -539,7 +546,6 @@ public class payments_contents {
         deleteBtn.setGraphic(trashIcon);
         deleteBtn.setCursor(javafx.scene.Cursor.HAND);
         deleteBtn.setStyle(deleteBtnStyle(false));
-        deleteBtn.setLayoutX(deleteX);
         deleteBtn.setLayoutY(btnY);
         deleteBtn.setPrefHeight(btnH);
         deleteBtn.setPrefWidth(iconW);
@@ -551,7 +557,6 @@ public class payments_contents {
                 "Payments (" + currentTab + ")",
                 "This will permanently remove all payments in this view.\nThis action cannot be undone.",
                 () -> {
-                    // Calls usp_HardDeleteAll — trg_PreventDeleteActive guards active rows
                     payments_util.hardDeleteAll(conn, currentTab);
                     cachedRows.clear();
                     selectedIds.clear();
@@ -569,7 +574,6 @@ public class payments_contents {
         exportCsvBtn.setGraphicTextGap(6);
         exportCsvBtn.setCursor(javafx.scene.Cursor.HAND);
         exportCsvBtn.setStyle(exportCsvBtnStyle(false));
-        exportCsvBtn.setLayoutX(exportCsvX);
         exportCsvBtn.setLayoutY(btnY);
         exportCsvBtn.setPrefHeight(btnH);
         exportCsvBtn.setPrefWidth(csvW);
@@ -584,11 +588,9 @@ public class payments_contents {
 
         // ── Tab buttons ───────────────────────────────────
         activeTabBtn = buildTabLabel("Active", true);
-        activeTabBtn.setLayoutX(activeTabX);
         activeTabBtn.setLayoutY(btnY);
 
         archivedTabBtn = buildTabLabel("Archived", false);
-        archivedTabBtn.setLayoutX(archivedTabX);
         archivedTabBtn.setLayoutY(btnY);
 
         activeTabBtn.setOnMouseEntered(e -> {
@@ -613,7 +615,6 @@ public class payments_contents {
         archiveAllBtn.setAlignment(Pos.CENTER);
         archiveAllBtn.setStyle(archiveAllBtnStyle(false));
         archiveAllBtn.setVisible(false);
-        archiveAllBtn.setLayoutX(archAllX);
         archiveAllBtn.setLayoutY(btnY);
         archiveAllBtn.setOnMouseEntered(e -> archiveAllBtn.setStyle(archiveAllBtnStyle(true)));
         archiveAllBtn.setOnMouseExited(e  -> archiveAllBtn.setStyle(archiveAllBtnStyle(false)));
@@ -631,13 +632,11 @@ public class payments_contents {
         confirmBtn.setAlignment(Pos.CENTER);
         confirmBtn.setStyle(confirmBtnStyle(false));
         confirmBtn.setVisible(false);
-        confirmBtn.setLayoutX(confirmX);
         confirmBtn.setLayoutY(btnY);
         confirmBtn.setOnMouseEntered(e -> confirmBtn.setStyle(confirmBtnStyle(true)));
         confirmBtn.setOnMouseExited(e  -> confirmBtn.setStyle(confirmBtnStyle(false)));
         confirmBtn.setOnMouseClicked(e -> {
             if (selectedIds.isEmpty()) return;
-            // Both paths now call stored procedures (usp_ArchivePayments / usp_RestorePayments)
             if (currentTab.equals("active")) payments_util.archiveSelected(conn, selectedIds);
             else                             payments_util.restoreSelected(conn, selectedIds);
             selectedIds.clear();
@@ -645,8 +644,9 @@ public class payments_contents {
             updateArchiveBtnIcon();
             archiveAllBtn.setVisible(false);
             confirmBtn.setVisible(false);
+            exportCsvBtn.setVisible(true);
             archiveBtn.setStyle(archiveBtnStyle(false));
-            repositionSearchBar();
+            repositionRightButtons();
             cachedRows = payments_util.fetchPayments(conn, currentTab);
             rebuildTable();
         });
@@ -673,7 +673,6 @@ public class payments_contents {
         searchBar.setPadding(new Insets(0, 10, 0, 12));
         searchBar.setPrefWidth(searchW);
         searchBar.setPrefHeight(btnH);
-        searchBar.setLayoutX(searchX);
         searchBar.setLayoutY(btnY);
         searchBar.setStyle(
             "-fx-background-color: white;" +
@@ -683,7 +682,6 @@ public class payments_contents {
             "-fx-border-radius: 20;"
         );
 
-        // Listener: delegate search to the DB proc instead of filtering cachedRows in Java
         searchField.textProperty().addListener((obs, oldVal, newVal) ->
             applySearch(newVal)
         );
@@ -693,7 +691,6 @@ public class payments_contents {
         double tableW = totalW - SIDE_PADDING * 2;
         double tableH = totalH - tableY - SIDE_PADDING;
 
-        // Initial load via usp_GetPayments (no search filter)
         cachedRows  = payments_util.fetchPayments(conn, "active");
         tableScroll = buildScrollPane(tableW, tableH, tableY);
 
@@ -701,6 +698,10 @@ public class payments_contents {
             titleRow, searchBar, archiveAllBtn, confirmBtn,
             activeTabBtn, archivedTabBtn, exportCsvBtn, deleteBtn, tableScroll
         );
+
+        // Position all right-side buttons for the initial normal state
+        repositionRightButtons();
+
         stackRoot.getChildren().add(root);
         return stackRoot;
     }
@@ -715,8 +716,9 @@ public class payments_contents {
         archiveAllBtn.setText(currentTab.equals("archived") ? "Restore All" : "Archive All");
         archiveAllBtn.setVisible(archiveMode);
         confirmBtn.setVisible(archiveMode);
+        exportCsvBtn.setVisible(!archiveMode);
         archiveBtn.setStyle(archiveBtnStyle(archiveMode));
-        repositionSearchBar();
+        repositionRightButtons();
         rebuildTable();
     }
 
@@ -744,13 +746,13 @@ public class payments_contents {
         archiveAllBtn.setText(tab.equals("archived") ? "Restore All" : "Archive All");
         archiveAllBtn.setVisible(false);
         confirmBtn.setVisible(false);
+        exportCsvBtn.setVisible(true);
         archiveBtn.setStyle(archiveBtnStyle(false));
 
         activeTabBtn.setStyle(tabBtnStyle(tab.equals("active")));
         archivedTabBtn.setStyle(tabBtnStyle(tab.equals("archived")));
-        repositionSearchBar();
+        repositionRightButtons();
 
-        // Reload via usp_GetPayments for the new tab
         cachedRows = payments_util.fetchPayments(conn, tab);
         rebuildTable();
     }
@@ -758,7 +760,7 @@ public class payments_contents {
     private Label buildTabLabel(String text, boolean selected) {
         Label lbl = new Label(text);
         lbl.setCursor(javafx.scene.Cursor.HAND);
-        lbl.setPrefWidth(90);
+        lbl.setPrefWidth(tabW);
         lbl.setPrefHeight(36);
         lbl.setAlignment(Pos.CENTER);
         lbl.setStyle(tabBtnStyle(selected));
@@ -874,7 +876,6 @@ public class payments_contents {
     }
 
     private ScrollPane buildScrollPane(double tableW, double tableH, double tableY) {
-        // getDisplayRows() returns cachedRows directly — already filtered by DB
         VBox tableBox = buildTable(tableW, getDisplayRows());
         ScrollPane sp = new ScrollPane(tableBox);
         sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);

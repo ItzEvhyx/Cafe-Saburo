@@ -14,6 +14,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Popup;
 import javafx.stage.Stage;
 import org.kordamp.ikonli.javafx.FontIcon;
 import org.kordamp.ikonli.fontawesome5.FontAwesomeSolid;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class inventory_contents {
 
@@ -47,7 +49,7 @@ public class inventory_contents {
     private static final double MODAL_W     = 440;
     private static final double MODAL_H     = 260;
     private static final double ADD_MODAL_W = 480;
-    private static final double ADD_MODAL_H = 420;
+    private static final double ADD_MODAL_H = 460;
 
     // ══════════════════════════════════════════════════════
     //  STYLE CONSTANTS
@@ -140,7 +142,247 @@ public class inventory_contents {
     }
 
     // ══════════════════════════════════════════════════════
+    //  INGREDIENT MULTI-SELECT DROPDOWN
+    //  Mirrors the pattern used in suppliers_contents.
+    //
+    //  Items stored in trigger.getProperties():
+    //    "items"        → List<String[]> { [0]=ingredient_id, [1]=ingredient_name }
+    //    "selectedIds"  → Set<String> of currently selected ingredient_ids
+    //    "summaryLabel" → Label showing the selection summary
+    //    "open"         → Boolean popup-open flag
+    // ══════════════════════════════════════════════════════
+
+    private VBox buildIngredientDropdownField(FontAwesomeSolid iconCode, String label) {
+        Label fieldLabel = new Label(label);
+        fieldLabel.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 12px;" +
+            "-fx-font-weight: bold;" +
+            "-fx-text-fill: #555555;"
+        );
+
+        FontIcon fi = new FontIcon(iconCode);
+        fi.setIconSize(13);
+        fi.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        Label summaryLabel = new Label("Select ingredient(s)...");
+        summaryLabel.setStyle(
+            "-fx-font-family: '" + FONT_FAMILY + "';" +
+            "-fx-font-size: 13px;" +
+            "-fx-text-fill: #AAAAAA;"
+        );
+        summaryLabel.setMaxWidth(Double.MAX_VALUE);
+        summaryLabel.setEllipsisString("…");
+        summaryLabel.setWrapText(false);
+        HBox.setHgrow(summaryLabel, Priority.ALWAYS);
+
+        FontIcon arrowIcon = new FontIcon(FontAwesomeSolid.CHEVRON_DOWN);
+        arrowIcon.setIconSize(11);
+        arrowIcon.setIconColor(javafx.scene.paint.Color.web(ACCENT));
+
+        HBox trigger = new HBox(10, fi, summaryLabel, arrowIcon);
+        trigger.setAlignment(Pos.CENTER_LEFT);
+        trigger.setPadding(new Insets(0, 14, 0, 14));
+        trigger.setPrefHeight(40);
+        trigger.setMaxWidth(Double.MAX_VALUE);
+        trigger.setCursor(javafx.scene.Cursor.HAND);
+        trigger.setStyle(dropdownTriggerStyle(false));
+
+        Set<String> selectedIngredientIds = new HashSet<>();
+        trigger.getProperties().put("items",        new ArrayList<String[]>());
+        trigger.getProperties().put("selectedIds",  selectedIngredientIds);
+        trigger.getProperties().put("summaryLabel", summaryLabel);
+        trigger.getProperties().put("open",         false);
+
+        trigger.setOnMouseEntered(e -> {
+            if (!Boolean.TRUE.equals(trigger.getProperties().get("open")))
+                trigger.setStyle(dropdownTriggerStyle(true));
+        });
+        trigger.setOnMouseExited(e -> {
+            if (!Boolean.TRUE.equals(trigger.getProperties().get("open")))
+                trigger.setStyle(dropdownTriggerStyle(false));
+        });
+        trigger.setOnMouseClicked(e -> openIngredientDropdown(trigger));
+
+        VBox wrapper = new VBox(6, fieldLabel, trigger);
+        wrapper.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(wrapper, Priority.ALWAYS);
+        return wrapper;
+    }
+
+    private String dropdownTriggerStyle(boolean hovered) {
+        return "-fx-background-color: " + (hovered ? "#FDF0F1" : "white") + ";" +
+               "-fx-background-radius: 10;" +
+               "-fx-border-color: " + ACCENT + ";" +
+               "-fx-border-width: 1.5;" +
+               "-fx-border-radius: 10;";
+    }
+
+    /** Populates the dropdown items. Each String[] must be: [0]=ingredient_id, [1]=ingredient_name */
+    @SuppressWarnings("unchecked")
+    private void setIngredientDropdownItems(VBox fieldBox, List<String[]> ingredients) {
+        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
+        items.clear();
+        items.addAll(ingredients);
+    }
+
+    /** Returns the Set of selected ingredient_ids from the dropdown. */
+    @SuppressWarnings("unchecked")
+    private Set<String> getIngredientDropdownSelected(VBox fieldBox) {
+        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        return (Set<String>) trigger.getProperties().get("selectedIds");
+    }
+
+    /**
+     * Returns the ingredient_name for a given ingredient_id
+     * from the dropdown's item list. Used to resolve names
+     * for the prependItem() live-update call after saving.
+     */
+    @SuppressWarnings("unchecked")
+    private String getIngredientNameById(VBox fieldBox, String ingredientId) {
+        HBox trigger = (HBox) fieldBox.getChildren().get(1);
+        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
+        for (String[] item : items) {
+            if (item[0].equals(ingredientId)) return item[1];
+        }
+        return ingredientId;
+    }
+
+    /** Opens the multi-select popup for ingredient selection. */
+    @SuppressWarnings("unchecked")
+    private void openIngredientDropdown(HBox trigger) {
+        List<String[]> items = (List<String[]>) trigger.getProperties().get("items");
+        if (items == null || items.isEmpty()) return;
+
+        Set<String> selectedIngredientIds = (Set<String>) trigger.getProperties().get("selectedIds");
+        Label summaryLabel = (Label) trigger.getProperties().get("summaryLabel");
+
+        VBox listBox = new VBox(0);
+        listBox.setStyle(
+            "-fx-background-color: white;" +
+            "-fx-border-color: " + ACCENT + ";" +
+            "-fx-border-width: 1.5;" +
+            "-fx-border-radius: 10;" +
+            "-fx-background-radius: 10;" +
+            "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.18), 12, 0, 0, 4);"
+        );
+
+        ScrollPane sp = new ScrollPane(listBox);
+        sp.setFitToWidth(true);
+        sp.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        sp.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        sp.setStyle(
+            "-fx-background: transparent;-fx-background-color: transparent;" +
+            "-fx-border-color: transparent;-fx-padding: 0;" +
+            "-fx-background-radius: 10;"
+        );
+        sp.setMaxHeight(200);
+
+        Popup popup = new Popup();
+        popup.setAutoHide(true);
+
+        double trigW = trigger.getWidth() > 0 ? trigger.getWidth() : ADD_MODAL_W - 56;
+        sp.setPrefWidth(trigW);
+        listBox.setPrefWidth(trigW);
+
+        Runnable refreshSummary = () -> {
+            if (selectedIngredientIds.isEmpty()) {
+                summaryLabel.setText("Select ingredient(s)...");
+                summaryLabel.setStyle(
+                    "-fx-font-family: '" + FONT_FAMILY + "';" +
+                    "-fx-font-size: 13px;" +
+                    "-fx-text-fill: #AAAAAA;"
+                );
+            } else {
+                String names = items.stream()
+                    .filter(it -> selectedIngredientIds.contains(it[0]))
+                    .map(it -> it[1])
+                    .collect(Collectors.joining(", "));
+                summaryLabel.setText(selectedIngredientIds.size() + " selected: " + names);
+                summaryLabel.setStyle(
+                    "-fx-font-family: '" + FONT_FAMILY + "';" +
+                    "-fx-font-size: 13px;" +
+                    "-fx-font-weight: bold;" +
+                    "-fx-text-fill: " + ACCENT + ";"
+                );
+            }
+        };
+
+        for (int i = 0; i < items.size(); i++) {
+            String[] ing    = items.get(i);
+            String   ingId  = ing[0];
+            String   ingName = ing[1];
+            boolean  isSel  = selectedIngredientIds.contains(ingId);
+            boolean  isLast = (i == items.size() - 1);
+
+            CheckBox cb = new CheckBox(ingName);
+            cb.setSelected(isSel);
+            cb.setStyle(
+                "-fx-font-family: '" + FONT_FAMILY + "';" +
+                "-fx-font-size: 13px;" +
+                "-fx-text-fill: #333333;" +
+                "-fx-cursor: hand;"
+            );
+
+            HBox row = new HBox(cb);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(9, 14, 9, 14));
+            row.setMaxWidth(Double.MAX_VALUE);
+            row.setCursor(javafx.scene.Cursor.HAND);
+            String rowRadius = isLast ? "0 0 9 9" : "0";
+            row.setStyle(ingredRowStyle(isSel, false, rowRadius));
+
+            cb.setOnAction(e -> {
+                if (cb.isSelected()) selectedIngredientIds.add(ingId);
+                else                 selectedIngredientIds.remove(ingId);
+                row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius));
+                refreshSummary.run();
+            });
+            row.setOnMouseEntered(e -> row.setStyle(ingredRowStyle(cb.isSelected(), true, rowRadius)));
+            row.setOnMouseExited(e  -> row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius)));
+            row.setOnMouseClicked(e -> {
+                if (e.getTarget() != cb) {
+                    cb.setSelected(!cb.isSelected());
+                    if (cb.isSelected()) selectedIngredientIds.add(ingId);
+                    else                 selectedIngredientIds.remove(ingId);
+                    row.setStyle(ingredRowStyle(cb.isSelected(), false, rowRadius));
+                    refreshSummary.run();
+                }
+            });
+
+            listBox.getChildren().add(row);
+        }
+
+        popup.getContent().add(sp);
+        popup.setOnHidden(e -> {
+            trigger.getProperties().put("open", false);
+            trigger.setStyle(dropdownTriggerStyle(false));
+        });
+
+        javafx.geometry.Bounds bounds = trigger.localToScreen(trigger.getBoundsInLocal());
+        if (bounds != null) {
+            popup.show(trigger, bounds.getMinX(), bounds.getMaxY() + 2);
+        }
+        trigger.getProperties().put("open", true);
+        trigger.setStyle(dropdownTriggerStyle(false));
+    }
+
+    private String ingredRowStyle(boolean selected, boolean hovered, String radius) {
+        String bg = selected && hovered ? "#EDD5D8"
+                  : selected            ? "#F5E8EA"
+                  : hovered             ? "#FDF0F1"
+                  :                       "white";
+        return "-fx-background-color: " + bg + ";" +
+               "-fx-background-radius: " + radius + ";";
+    }
+
+    // ══════════════════════════════════════════════════════
     //  ADD INGREDIENT MODAL
+    //  The Ingredient Name field is now a multi-select
+    //  dropdown populated from dbo.Ingredients via
+    //  inventory_util.fetchAllIngredients(). One inventory
+    //  row is inserted per selected ingredient.
     // ══════════════════════════════════════════════════════
     private void openAddIngredientModal() {
         Pane overlay = new Pane();
@@ -205,15 +447,35 @@ public class inventory_contents {
         formBody.setPadding(new Insets(26, 28, 10, 28));
         VBox.setVgrow(formBody, Priority.ALWAYS);
 
-        VBox ingredientField = buildFormField(FontAwesomeSolid.SEEDLING,           "Ingredient Name",     "e.g. Arabica Coffee Beans");
-        VBox quantityField   = buildFormField(FontAwesomeSolid.BALANCE_SCALE,      "Quantity",            "e.g. 50");
-        VBox unitField       = buildFormField(FontAwesomeSolid.TAG,                "Unit (ml/l/g/kg/pcs)","e.g. kg");
-        VBox reorderField    = buildFormField(FontAwesomeSolid.EXCLAMATION_CIRCLE, "Reorder Level",       "e.g. 10");
+        // Ingredient dropdown — replaces the old free-text TextField
+        VBox ingredientDropdown = buildIngredientDropdownField(
+            FontAwesomeSolid.SEEDLING, "Ingredient (select one or more)");
 
-        TextField ingredientInput = extractTextField(ingredientField);
-        TextField quantityInput   = extractTextField(quantityField);
-        TextField unitInput       = extractTextField(unitField);
-        TextField reorderInput    = extractTextField(reorderField);
+        // Load ingredients from dbo.Ingredients directly
+        List<String[]> allIngredients;
+        try {
+            allIngredients = inventory_util.fetchAllIngredients(conn);
+            if (allIngredients == null) allIngredients = new ArrayList<>();
+        } catch (Exception ex) {
+            System.err.println("[inventory_contents] fetchAllIngredients threw: " + ex.getMessage());
+            ex.printStackTrace();
+            allIngredients = new ArrayList<>();
+        }
+
+        if (!allIngredients.isEmpty()) {
+            setIngredientDropdownItems(ingredientDropdown, allIngredients);
+        }
+
+        // Keep a final reference for the save lambda
+        final List<String[]> finalAllIngredients = allIngredients;
+
+        VBox quantityField = buildFormField(FontAwesomeSolid.BALANCE_SCALE,      "Quantity",             "e.g. 50");
+        VBox unitField     = buildFormField(FontAwesomeSolid.TAG,                "Unit (ml/l/g/kg/pcs)", "e.g. kg");
+        VBox reorderField  = buildFormField(FontAwesomeSolid.EXCLAMATION_CIRCLE, "Reorder Level",        "e.g. 10");
+
+        TextField quantityInput = extractTextField(quantityField);
+        TextField unitInput     = extractTextField(unitField);
+        TextField reorderInput  = extractTextField(reorderField);
 
         // Integer-only filter for quantity and reorder
         quantityInput.textProperty().addListener((obs, o, n) -> {
@@ -236,7 +498,7 @@ public class inventory_contents {
         errorLbl.setVisible(false);
         errorLbl.setManaged(false);
 
-        formBody.getChildren().addAll(ingredientField, qtyUnitRow, reorderField, errorLbl);
+        formBody.getChildren().addAll(ingredientDropdown, qtyUnitRow, reorderField, errorLbl);
 
         // ── Footer ────────────────────────────────────────
         HBox footer = new HBox(12);
@@ -264,41 +526,59 @@ public class inventory_contents {
         saveBtn.setStyle(addSaveBtnStyle(false));
         saveBtn.setOnMouseEntered(e -> saveBtn.setStyle(addSaveBtnStyle(true)));
         saveBtn.setOnMouseExited(e  -> saveBtn.setStyle(addSaveBtnStyle(false)));
+
         saveBtn.setOnMouseClicked(e -> {
-            String ingVal     = ingredientInput.getText().trim();
             String qtyVal     = quantityInput.getText().trim();
             String unitVal    = unitInput.getText().trim();
             String reorderVal = reorderInput.getText().trim();
 
-            if (ingVal.isEmpty() || qtyVal.isEmpty() || unitVal.isEmpty() || reorderVal.isEmpty()) {
-                errorLbl.setText("⚠  All fields are required.");
-                errorLbl.setVisible(true);
-                errorLbl.setManaged(true);
+            // Validate shared fields first
+            if (qtyVal.isEmpty() || unitVal.isEmpty() || reorderVal.isEmpty()) {
+                showError(errorLbl, "⚠  Quantity, unit, and reorder level are required.");
+                return;
+            }
+            if (!inventory_util.isValidUnit(unitVal)) {
+                showError(errorLbl, "⚠  Unit must be one of: ml, l, g, kg, pcs.");
+                return;
+            }
+            if (finalAllIngredients.isEmpty()) {
+                showError(errorLbl, "⚠  No ingredients found. Add ingredients in the Ingredients module first.");
                 return;
             }
 
-            if (!inventory_util.isValidUnit(unitVal)) {
-                errorLbl.setText("⚠  Unit must be one of: ml, l, g, kg, pcs.");
-                errorLbl.setVisible(true);
-                errorLbl.setManaged(true);
+            Set<String> selectedIngredientIds = getIngredientDropdownSelected(ingredientDropdown);
+            if (selectedIngredientIds.isEmpty()) {
+                showError(errorLbl, "⚠  Please select at least one ingredient.");
                 return;
             }
 
             int qty     = Integer.parseInt(qtyVal);
             int reorder = Integer.parseInt(reorderVal);
-            String newId = inventory_util.insertIngredient(conn, ingVal, qty, unitVal.toLowerCase(), reorder);
+            String unitLower = unitVal.toLowerCase();
 
-            if (newId == null) {
-                errorLbl.setText("⚠  Failed to save. Check connection.");
-                errorLbl.setVisible(true);
-                errorLbl.setManaged(true);
+            // Insert one inventory row per selected ingredient
+            boolean anyFailed = false;
+            for (String ingId : selectedIngredientIds) {
+                String newId = inventory_util.insertIngredientById(conn, ingId, qty, unitLower, reorder);
+                if (newId == null) {
+                    anyFailed = true;
+                    System.err.println("[inventory_contents] insertIngredientById failed for ingredient_id=" + ingId);
+                } else if (currentTab.equals("active")) {
+                    String ingName = getIngredientNameById(ingredientDropdown, ingId);
+                    prependItem(newId, ingName, String.valueOf(qty), unitLower, String.valueOf(reorder));
+                }
+            }
+
+            if (anyFailed) {
+                // Partial failure — stay open and warn, table already updated for successes
+                showError(errorLbl, "⚠  One or more ingredients failed to save. Check connection.");
                 return;
             }
 
             stackRoot.getChildren().remove(overlay);
-            if (currentTab.equals("active")) {
-                prependItem(newId, ingVal, String.valueOf(qty), unitVal.toLowerCase(), String.valueOf(reorder));
-            }
+            // Full reload to ensure DB order is respected
+            cachedRows = inventory_util.fetchInventory(conn, currentTab);
+            rebuildTable();
         });
 
         footer.getChildren().addAll(cancelBtn, saveBtn);
@@ -311,6 +591,12 @@ public class inventory_contents {
         centred.setAlignment(Pos.CENTER);
         overlay.getChildren().add(centred);
         stackRoot.getChildren().add(overlay);
+    }
+
+    private void showError(Label lbl, String msg) {
+        lbl.setText(msg);
+        lbl.setVisible(true);
+        lbl.setManaged(true);
     }
 
     // ── Form field factory ────────────────────────────────

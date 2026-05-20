@@ -307,9 +307,15 @@ public class auth_ui {
 
         VBox modalCard = new VBox(20);
         modalCard.setAlignment(Pos.CENTER);
-        modalCard.setPadding(new Insets(48, 64, 48, 64));
-        modalCard.setPrefWidth(MODAL_W);  modalCard.setMinWidth(MODAL_W);  modalCard.setMaxWidth(MODAL_W);
-        modalCard.setPrefHeight(MODAL_H); modalCard.setMinHeight(MODAL_H); modalCard.setMaxHeight(MODAL_H);
+        modalCard.setPadding(new Insets(48, 40, 48, 40));
+        // Width: computed from content (responsive), bounded between MODAL_W and a generous max
+        modalCard.setMinWidth(MODAL_W);
+        modalCard.setPrefWidth(VBox.USE_COMPUTED_SIZE);
+        modalCard.setMaxWidth(560);
+        // Height: fixed as originally intended
+        modalCard.setPrefHeight(MODAL_H);
+        modalCard.setMinHeight(MODAL_H);
+        modalCard.setMaxHeight(MODAL_H);
         modalCard.setStyle(
             "-fx-background-color: #68222A;" +
             "-fx-background-radius: 20;" +
@@ -326,8 +332,10 @@ public class auth_ui {
         Label modalMsg = new Label();
         modalMsg.setFont(Font.loadFont("file:assets/fonts/Aleo-SemiBold.ttf", 20));
         modalMsg.setTextFill(Color.WHITE);
+        // FIX: ensure text wraps and is not clipped for long manager names
         modalMsg.setWrapText(true);
         modalMsg.setAlignment(Pos.CENTER);
+        modalMsg.setTextAlignment(javafx.scene.text.TextAlignment.CENTER);
         modalMsg.setMaxWidth(Double.MAX_VALUE);
 
         Button modalOkBtn = new Button("Continue");

@@ -1,5 +1,7 @@
 package backend;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,10 +20,6 @@ public class auth_util {
         EMPLOYEE,
         MANAGER
     }
-
-    // ── Hardcoded manager credentials ────────────────────
-    private static final String MANAGER_NAME     = "Evhy Suba";
-    private static final String MANAGER_PASSWORD = "Admin@12345";
 
     // ── Formatters ────────────────────────────────────────
     private static final DateTimeFormatter TIME_FMT =
@@ -74,34 +72,72 @@ public class auth_util {
     }
 
     // ══════════════════════════════════════════════════════
-    //  MANAGER AUTHENTICATION  — hardcoded, no DB lookup
+    //  MANAGER AUTHENTICATION  — DB-driven (dbo.Managers)
     // ══════════════════════════════════════════════════════
 
     /**
-     * Validates against the single hardcoded manager account (Evhy Suba).
-     * On success sets role to MANAGER. Manager sessions do NOT open a TimeLogs row.
+     * Validates manager credentials against the dbo.Managers table.
+     * Passwords are compared as SHA-256 hashes (hex-encoded, uppercase).
+     * On success, sets role to MANAGER. Manager sessions do NOT open a TimeLogs row.
+     *
+     * @param name     manager name as entered in the UI
+     * @param password plaintext password as entered in the UI
      */
     public static AuthResult authenticateManager(String name, String password) {
         if (name == null || name.trim().isEmpty())
             return AuthResult.fail("Please enter your name.");
         if (password == null || password.isEmpty())
             return AuthResult.fail("Please enter your password.");
+        if (conn == null)
+            return AuthResult.fail("No database connection.");
+        try {
+            if (conn.isClosed()) return AuthResult.fail("Database connection is closed.");
+        } catch (Exception e) { return AuthResult.fail("Database error."); }
 
-        boolean ok = name.trim().equalsIgnoreCase(MANAGER_NAME)
-                  && password.equals(MANAGER_PASSWORD);
+        // Hash the plaintext password before comparing with the stored hash.
+        String hashedInput;
+        try {
+            hashedInput = sha256Hex(password);
+        } catch (Exception e) {
+            return AuthResult.fail("Authentication error: could not hash password.");
+        }
 
-        if (!ok) return AuthResult.fail("Invalid credentials.");
+        String sql =
+            "SELECT manager_id, manager_name " +
+            "FROM   dbo.Managers " +
+            "WHERE  LOWER(LTRIM(RTRIM(manager_name))) = LOWER(LTRIM(RTRIM(?))) " +
+            "  AND  password = ?";
 
-        currentRole  = UserRole.MANAGER;
-        currentName  = MANAGER_NAME;
-        currentId    = null;
-        currentLogId = null;
-        shiftStart   = LocalDateTime.now();
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, name.trim());
+            ps.setString(2, hashedInput);
+            ResultSet rs = ps.executeQuery();
 
-        System.out.println("[MANAGER LOGIN] Name : " + currentName);
-        System.out.println("[MANAGER LOGIN] Time : " + getShiftStartFullFormatted());
+            if (!rs.next()) {
+                rs.close();
+                return AuthResult.fail("Invalid credentials.");
+            }
 
-        return AuthResult.ok(MANAGER_NAME);
+            String managerId   = rs.getString("manager_id");
+            String managerName = rs.getString("manager_name");
+            rs.close();
+
+            currentRole  = UserRole.MANAGER;
+            currentName  = managerName;
+            currentId    = managerId;
+            currentLogId = null;
+            shiftStart   = LocalDateTime.now();
+
+            System.out.println("[MANAGER LOGIN] Name : " + currentName);
+            System.out.println("[MANAGER LOGIN] ID   : " + currentId);
+            System.out.println("[MANAGER LOGIN] Time : " + getShiftStartFullFormatted());
+
+            return AuthResult.ok(managerName);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return AuthResult.fail("Database error: " + e.getMessage());
+        }
     }
 
     // ══════════════════════════════════════════════════════
@@ -341,6 +377,23 @@ public class auth_util {
      */
     private static String generateLogId() {
         return "LOG-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    /**
+     * Returns the SHA-256 hash of the given plaintext as an uppercase hex string.
+     * Used to hash manager passwords before comparing with stored values.
+     *
+     * Example: sha256Hex("Admin@12345")
+     *        → "665A6DA9F18B4CFBBA29F1040AC62BBBC63F6FD52C9B3AE55E05DC0E28CDBA17"
+     */
+    private static String sha256Hex(String plaintext) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hashBytes = digest.digest(plaintext.getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        for (byte b : hashBytes) {
+            sb.append(String.format("%02X", b));
+        }
+        return sb.toString();
     }
 
     // ══════════════════════════════════════════════════════

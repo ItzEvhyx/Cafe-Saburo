@@ -1,2 +1,2 @@
-SELECT * FROM suppliers;
+SELECT * FROM Managers;
  
